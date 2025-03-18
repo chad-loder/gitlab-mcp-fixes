@@ -45,6 +45,48 @@ rm -rf .git/
 
 This process extracts only the API documentation markdown files without the entire GitLab documentation repository, making it more manageable for our purposes.
 
+### Resource ID Format
+
+Resources in the system use a hierarchical ID format that uniquely identifies each document:
+
+```
+<collection_id>/<relative_path_without_extension>
+```
+
+For example:
+- `gitlab-api-docs/users` - The main Users API documentation
+- `gitlab-api-docs/group_labels` - Documentation for group labels
+- `gitlab-api-docs/rest/authentication` - Authentication documentation in the REST subdirectory
+
+This ID format serves two purposes:
+1. It ensures uniqueness across all documents, even when files in different directories have the same name
+2. It provides a predictable way to reference resources in MCP function calls
+
+### Using Search Results
+
+When using the `mcp_GitLab_MCP_search_resources` function, the results include both `id` and `resource_id` fields (they contain the same value) that can be used to retrieve the full content of a document with the `mcp_GitLab_MCP_read_resource` function.
+
+Typical workflow:
+
+1. Search for relevant documentation:
+   ```javascript
+   const searchResults = await mcp.invoke('mcp_GitLab_MCP_search_resources', {
+     collection_id: 'gitlab-api-docs',
+     query: 'create project',
+     limit: 5
+   });
+   ```
+
+2. Get the full content of a specific result:
+   ```javascript
+   const resource = await mcp.invoke('mcp_GitLab_MCP_read_resource', {
+     collection_id: 'gitlab-api-docs',
+     resource_id: searchResults[0].resource_id
+   });
+   ```
+
+This pattern allows AI clients to efficiently find and access the most relevant documentation for user queries.
+
 ### Enhanced Search Implementation
 
 The resources use MiniSearch, a lightweight full-text search engine, configured specifically for API documentation:
@@ -147,3 +189,20 @@ The resources in this directory are made available through the following MCP API
 - `mcp_GitLab_MCP_search_resources`: Searches for content within a collection's resources
 
 These functions allow AI clients to efficiently access and search the GitLab API documentation. 
+
+### Command-line Diagnostics
+
+For development and debugging purposes, you can run diagnostics on the GitLab API documentation search functionality using:
+
+```bash
+node build/resources/gitlab-api-docs.js --diagnose
+```
+
+This will:
+1. Load all GitLab API documentation
+2. Display statistics about the content (size, parameter tables, etc.)
+3. Build a search index
+4. Run test searches with timing information
+5. Show sample resource IDs and how to use them in MCP calls
+
+This is useful for validating the search functionality and understanding how documents are organized and indexed. 

@@ -1,7 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 import { promisify } from 'util';
 import MiniSearch from 'minisearch';
+
+// Create dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /**
  * Interface defining a documentation resource collection
@@ -36,7 +42,7 @@ export function registerCollection(collection: ResourceCollection): void {
  * Cache structure for collection contents and search indices
  * Maintains loaded resources and search indices with timestamps
  */
-interface CollectionCache {
+export interface CollectionCache {
   resources: ResourceFile[];
   searchIndex: MiniSearch<ResourceFile> | null;
   indexTimestamp: number;
@@ -114,7 +120,8 @@ interface ResourceContent {
  * Response item for search results
  */
 interface SearchResult {
-  id: string;
+  id: string;                   // Resource ID for use with mcp_GitLab_MCP_read_resource
+  resource_id: string;          // Alias of id, for clarity in MCP calls
   title: string;
   score: number;
   snippet: string;
@@ -180,8 +187,13 @@ function extractTitle(content: string, resourceId: string): string {
     return h2Match[1].trim();
   }
 
-  // Fallback to resourceId
-  return resourceId
+  // Get the last part of the ID if it's a hierarchical ID
+  const simpleId = resourceId.includes('/')
+    ? resourceId.split('/').pop() || resourceId
+    : resourceId;
+
+  // Fallback to humanized resourceId
+  return simpleId
     .replace(/[-_]/g, ' ')
     .replace(/^\w|\s\w/g, match => match.toUpperCase());
 }
@@ -348,6 +360,7 @@ export async function initializeResources(mcp: any): Promise<void> {
 
       return {
         id: resource.id,
+        resource_id: resource.id,    // Add alias for clarity
         title: resource.title,
         score: result.score,
         snippet: snippetContext,
@@ -403,7 +416,7 @@ export async function getResourcesForCollection(collection: ResourceCollection):
  * @param {ResourceCollection} collection - The collection to get the search index for
  * @returns {Promise<CollectionCache>} Promise resolving to the collection cache with search index
  */
-async function getSearchIndexForCollection(collection: ResourceCollection): Promise<CollectionCache> {
+export async function getSearchIndexForCollection(collection: ResourceCollection): Promise<CollectionCache> {
   // Check if we have a cache with a search index
   if (
     collectionCache[collection.id] &&
@@ -489,11 +502,12 @@ export async function loadResourcesFromCollection(collection: ResourceCollection
       const content = await readFileAsync(file, 'utf8');
       const relativePath = path.relative(dirPath, file);
 
-      // Generate resource ID from the relative path without extension
-      const resourceId = path.basename(relativePath, '.md');
+      // Generate a hierarchical resource ID including collection and full path
+      // Replace path separators with / and remove .md extension
+      const resourceId = `${collectionId}/${relativePath.replace(/\\/g, '/').replace(/\.md$/, '')}`;
 
       // Extract title using enhanced extraction logic
-      const title = extractTitle(content, resourceId);
+      const title = extractTitle(content, path.basename(relativePath, '.md'));
 
       // Extract parameter table information
       const parameterData = extractParameterTables(content);

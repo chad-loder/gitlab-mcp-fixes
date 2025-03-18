@@ -10,6 +10,7 @@ import { dirname } from "path";
 import fs from "fs";
 import path from "path";
 import { initializeResources } from "./resources/index.js";
+import { registerGitLabApiDocs } from "./resources/gitlab-api-docs.js";
 import { GitLabForkSchema, GitLabReferenceSchema, GitLabRepositorySchema, GitLabIssueSchema, GitLabMergeRequestSchema, GitLabContentSchema, GitLabDirectoryContentSchema, GitLabCreateUpdateFileResponseSchema, GitLabSearchResponseSchema, GitLabTreeSchema, GitLabCommitSchema, GitLabNamespaceSchema, GitLabNamespaceExistsResponseSchema, GitLabProjectSchema, CreateOrUpdateFileSchema, SearchRepositoriesSchema, CreateRepositorySchema, GetFileContentsSchema, PushFilesSchema, CreateIssueSchema, CreateMergeRequestSchema, ForkRepositorySchema, CreateBranchSchema, GitLabMergeRequestDiffSchema, GetMergeRequestSchema, GetMergeRequestDiffsSchema, UpdateMergeRequestSchema, ListIssuesSchema, GetIssueSchema, UpdateIssueSchema, DeleteIssueSchema, GitLabIssueLinkSchema, GitLabIssueWithLinkDetailsSchema, ListIssueLinksSchema, GetIssueLinkSchema, CreateIssueLinkSchema, DeleteIssueLinkSchema, ListNamespacesSchema, GetNamespaceSchema, VerifyNamespaceSchema, GetProjectSchema, ListProjectsSchema, CreateNoteSchema, } from "./schemas.js";
 /**
  * Read version from package.json
@@ -1343,6 +1344,8 @@ async function runServer() {
         console.error(`GitLab MCP Server v${SERVER_VERSION}`);
         console.error(`API URL: ${GITLAB_API_URL}`);
         console.error("========================");
+        // Register the GitLab API documentation collection
+        registerGitLabApiDocs();
         // Initialize resources before connecting the transport
         await initializeResources(server);
         const transport = new StdioServerTransport();

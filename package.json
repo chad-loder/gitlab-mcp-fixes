@@ -18,6 +18,7 @@
   "scripts": {
     "clean": "rm -rf build",
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "postbuild": "mkdir -p build/resources/gitlab-api-docs && cp -R resources/gitlab-api-docs/* build/resources/gitlab-api-docs/",
     "prepare": "npm run build",
     "watch": "tsc --watch",
     "deploy": "npm run build && npm publish"
@@ -25,6 +26,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.0.1",
     "@types/node-fetch": "^2.6.12",
+    "minisearch": "^6.3.0",
     "node-fetch": "^3.3.2",
     "zod-to-json-schema": "^3.23.5"
   },
