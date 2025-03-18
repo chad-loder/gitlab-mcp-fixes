@@ -35,16 +35,16 @@
 | OPERATION TYPE | CONDITION | USE THIS | AVOID THIS |
 |----------------|-----------|----------|------------|
 | Any GitLab CLI command | Command supports `--output json` flag | Add `--output json` flag | Default text output |
-| File operations (single file) | File path known | `mcp_GitLab_MCP_create_or_update_file` | Direct Git commands |
-| File operations (multiple files) | Files in same repository | `mcp_GitLab_MCP_push_files` | Multiple single-file operations |
-| Repository creation | Standard repository needed | `mcp_GitLab_MCP_create_repository` | `glab repo create` |
-| Repository forking | Fork to same GitLab instance | `mcp_GitLab_MCP_fork_repository` | `glab repo fork` |
-| Branch creation | Creating from known ref | `mcp_GitLab_MCP_create_branch` | `git branch` + `git push` |
-| Issue creation | Project ID known | `mcp_GitLab_MCP_create_issue` | `glab issue create` |
-| Merge request creation | Requires custom parameters | `glab mr create` | `mcp_GitLab_MCP_create_merge_request` |
-| Existing merge request management | MR ID/IID known | `glab mr [command] --output json` | `mcp_GitLab_MCP_get_merge_request` |
-| Repository search | Simple query needed | `mcp_GitLab_MCP_search_repositories` | `glab repo list` |
-| Comment/note addition | Issue/MR ID known | `mcp_GitLab_MCP_create_note` | `glab api` endpoints |
+| File operations (single file) | File path known | `mcp_GitLab_create_or_update_file` | Direct Git commands |
+| File operations (multiple files) | Files in same repository | `mcp_GitLab_push_files` | Multiple single-file operations |
+| Repository creation | Standard repository needed | `mcp_GitLab_create_repository` | `glab repo create` |
+| Repository forking | Fork to same GitLab instance | `mcp_GitLab_fork_repository` | `glab repo fork` |
+| Branch creation | Creating from known ref | `mcp_GitLab_create_branch` | `git branch` + `git push` |
+| Issue creation | Project ID known | `mcp_GitLab_create_issue` | `glab issue create` |
+| Merge request creation | Requires custom parameters | `glab mr create` | `mcp_GitLab_create_merge_request` |
+| Existing merge request management | MR ID/IID known | `glab mr [command] --output json` | `mcp_GitLab_get_merge_request` |
+| Repository search | Simple query needed | `mcp_GitLab_search_repositories` | `glab repo list` |
+| Comment/note addition | Issue/MR ID known | `mcp_GitLab_create_note` | `glab api` endpoints |
 | Running outside Git repo | Any command | Prefix with `GITLAB_HOST=hostname` | Default host detection |
 | Batch operations | Operating on >3 repositories | `glab` with shell scripting | MCP functions |
 
@@ -106,22 +106,22 @@
 
 | FUNCTION | PARAMETERS | USE CASE | NOTES |
 |----------|------------|----------|-------|
-| `mcp_GitLab_MCP_create_or_update_file` | project_id, file_path, content, commit_message, branch | Single file creation/update | File path must be absolute |
-| `mcp_GitLab_MCP_get_file_contents` | project_id, file_path, [ref] | Retrieve file content | Optional ref defaults to main/master |
-| `mcp_GitLab_MCP_push_files` | project_id, branch, files, commit_message | Multi-file commits | Use for batch operations |
-| `mcp_GitLab_MCP_create_repository` | name, [description], [visibility] | Create new repository | visibility: public, private, internal |
-| `mcp_GitLab_MCP_fork_repository` | project_id, [namespace] | Fork existing repository | Defaults to user namespace |
-| `mcp_GitLab_MCP_create_branch` | project_id, branch, [ref] | Create new branch | Optional ref defaults to default branch |
-| `mcp_GitLab_MCP_create_issue` | project_id, title, [description], [assignee_ids], [labels] | Create issue | Works with numeric ID or path format |
-| `mcp_GitLab_MCP_create_note` | project_id, noteable_type, noteable_iid, body | Add comment to issue/MR | noteable_type: 'issue' or 'merge_request' |
-| `mcp_GitLab_MCP_search_repositories` | search, [page], [per_page] | Search for repositories | Supports pagination |
+| `mcp_GitLab_create_or_update_file` | project_id, file_path, content, commit_message, branch | Single file creation/update | File path must be absolute |
+| `mcp_GitLab_get_file_contents` | project_id, file_path, [ref] | Retrieve file content | Optional ref defaults to main/master |
+| `mcp_GitLab_push_files` | project_id, branch, files, commit_message | Multi-file commits | Use for batch operations |
+| `mcp_GitLab_create_repository` | name, [description], [visibility] | Create new repository | visibility: public, private, internal |
+| `mcp_GitLab_fork_repository` | project_id, [namespace] | Fork existing repository | Defaults to user namespace |
+| `mcp_GitLab_create_branch` | project_id, branch, [ref] | Create new branch | Optional ref defaults to default branch |
+| `mcp_GitLab_create_issue` | project_id, title, [description], [assignee_ids], [labels] | Create issue | Works with numeric ID or path format |
+| `mcp_GitLab_create_note` | project_id, noteable_type, noteable_iid, body | Add comment to issue/MR | noteable_type: 'issue' or 'merge_request' |
+| `mcp_GitLab_search_repositories` | search, [page], [per_page] | Search for repositories | Supports pagination |
 
 ### Known Problematic Functions
 
 | FUNCTION | ALTERNATIVE APPROACH | REASON |
 |----------|----------------------|--------|
-| `mcp_GitLab_MCP_create_merge_request` | `glab mr create --source-branch X --target-branch Y` | Parameter validation issues |
-| `mcp_GitLab_MCP_get_merge_request` | `glab api "projects/PROJECT_ID/merge_requests/MR_IID"` | Strict parameter requirements |
+| `mcp_GitLab_create_merge_request` | `glab mr create --source-branch X --target-branch Y` | Parameter validation issues |
+| `mcp_GitLab_get_merge_request` | `glab api "projects/PROJECT_ID/merge_requests/MR_IID"` | Strict parameter requirements |
 
 ## Token-Efficient Response Processing
 
@@ -140,10 +140,10 @@
 ### File Operations
 ```bash
 # Create or update file
-mcp_GitLab_MCP_create_or_update_file project_id="12345" file_path="path/to/file.txt" content="file content" commit_message="commit message" branch="main"
+mcp_GitLab_create_or_update_file project_id="12345" file_path="path/to/file.txt" content="file content" commit_message="commit message" branch="main"
 
 # Get file contents
-mcp_GitLab_MCP_get_file_contents project_id="12345" file_path="path/to/file.txt"
+mcp_GitLab_get_file_contents project_id="12345" file_path="path/to/file.txt"
 ```
 
 ### MR Operations
@@ -173,7 +173,7 @@ glab ci run --ref main --variables "VAR1:value1" "VAR2:value2"
 ### Repository Operations
 ```bash
 # Create repository
-mcp_GitLab_MCP_create_repository name="new-repo" description="Description" visibility="private"
+mcp_GitLab_create_repository name="new-repo" description="Description" visibility="private"
 
 # Clone repository
 glab repo clone group/project [directory]
@@ -244,8 +244,8 @@ glab variable create API_KEY < <(pwgen -s $(( (RANDOM % (64 - 32 + 1)) + 32 )) 1
 
 | ISSUE | AFFECTED COMPONENT | WORKAROUND | TECHNICAL DETAILS |
 |-------|-------------------|------------|-------------------|
-| Parameter validation errors | `mcp_GitLab_MCP_create_merge_request` | Use `glab mr create` | Function requires undocumented parameters like `diff_refs` |
-| Strict response validation | `mcp_GitLab_MCP_get_merge_request` | Use `glab api` endpoint | Use: `glab api "projects/PROJECT_ID/merge_requests/MR_IID"` |
+| Parameter validation errors | `mcp_GitLab_create_merge_request` | Use `glab mr create` | Function requires undocumented parameters like `diff_refs` |
+| Strict response validation | `mcp_GitLab_get_merge_request` | Use `glab api` endpoint | Use: `glab api "projects/PROJECT_ID/merge_requests/MR_IID"` |
 | Artifact download failures | GitLab job artifacts | Use direct API with port | `glab api "projects/PROJECT_ID/jobs/JOB_ID/artifacts" > artifacts.zip` |
 | Non-standard ports | Self-hosted GitLab | Add port to host definition | Format: `GITLAB_HOST=gitlab.example.com:PORT` |
 | Server startup issues | MCP server scripts | Execute built code directly | Use `node $REPO_DIR/build/index.js` with explicit env vars |
