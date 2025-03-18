@@ -132,7 +132,7 @@ const server = new Server(
           ),
         },
         "mcp_GitLab_MCP_search_resources": {
-          description: "Search for content within a collection's resources",
+          description: "Search for content within a collection's resources with advanced options for fine-tuning search behavior (fuzzy matching, field boosting, etc).",
           parameters: zodToJsonSchema(
             z.object({
               collection_id: z.string().describe("The ID of the collection to search in"),
@@ -1436,6 +1436,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "mcp_GitLab_MCP_list_projects",
         description: "List GitLab projects accessible by the current user with extensive filtering options. Supports pagination and sorting.",
         inputSchema: zodToJsonSchema(ListProjectsSchema),
+      },
+      {
+        name: "mcp_GitLab_MCP_search_resources",
+        description: "Search for content within a collection's resources with advanced options for fine-tuning search behavior (fuzzy matching, field boosting, etc).",
+        inputSchema: zodToJsonSchema(
+          z.object({
+            collection_id: z.string().describe("The ID of the collection to search in"),
+            query: z.string().describe("The search query to find in resources"),
+            limit: z.number().optional().describe("Maximum number of results to return (default: 10)"),
+            fuzzy: z.number().optional().describe("Fuzzy search tolerance, between 0 and 1 (default: 0.2). Set to 0 to disable fuzzy matching."),
+            prefix: z.boolean().optional().describe("Whether to perform prefix matching (default: true)"),
+            boost: z.object({
+              title: z.number().optional().describe("Boost factor for title field (default: 8)"),
+              parameterData: z.number().optional().describe("Boost factor for parameter data field (default: 3)"),
+              content: z.number().optional().describe("Boost factor for content field (default: 1)")
+            }).optional().describe("Custom boost factors for specific fields"),
+            fields: z.array(z.enum(["title", "parameterData", "content"])).optional().describe("Fields to search in (default: all fields)")
+          })
+        ),
       },
     ],
   };
