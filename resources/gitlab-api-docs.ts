@@ -476,8 +476,20 @@ async function runDiagnostics(): Promise<void> {
       .filter(term => {
         // Define stopwords for query analysis
         const API_DOC_STOPWORDS = new Set([
-          'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'else', 'when',
-          'gitlab', 'api', 'parameter', 'parameters', 'example'
+          // Common English stopwords
+          'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'if', 'in',
+          'into', 'is', 'it', 'no', 'not', 'of', 'on', 'or', 'such', 'that', 'the',
+          'their', 'then', 'there', 'these', 'they', 'this', 'to', 'was', 'will', 'with',
+          'when', 'else',
+
+          // Domain-specific terms
+          'api', 'gitlab', 'parameter', 'parameters', 'example', 'examples', 'response',
+          'request', 'endpoint', 'field', 'value', 'true', 'false', 'null', 'object',
+
+          // High-frequency terms from diagnostics
+          'see', 'https', 'com', 'stage', 'info', 'determine', 'technical', 'writer',
+          'assigned', 'associated', 'page', 'handbook', 'product', 'writing', 'title',
+          'details'
         ]);
         return !API_DOC_STOPWORDS.has(term);
       });
