@@ -1,6 +1,6 @@
 {
   "name": "@zereight/mcp-gitlab",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "description": "MCP server for using the GitLab API",
   "license": "MIT",
   "author": "zereight",
@@ -26,7 +26,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.0.1",
     "@types/node-fetch": "^2.6.12",
-    "minisearch": "^6.3.0",
+    "minisearch": "^7.1.2",
     "node-fetch": "^3.3.2",
     "zod-to-json-schema": "^3.23.5"
   },
