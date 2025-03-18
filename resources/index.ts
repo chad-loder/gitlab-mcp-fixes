@@ -520,7 +520,7 @@ export async function getSearchIndexForCollection(collection: ResourceCollection
 
       // Default search options
       searchOptions: {
-        boost: { title: 8, parameterData: 3, content: 1 }, // Higher boost for titles
+        boost: { title: 12, parameterData: 3, content: 1 }, // Higher boost for titles
         fuzzy: 0.2,
         prefix: true
       }
@@ -706,23 +706,15 @@ export async function searchCollection(params: {
     }
 
     // Get content around matches for context
-    let snippets: string[] = [];
-    const lines = resource.content.split('\n');
-
-    // Simple snippet extraction - could be improved with term highlighting
-    if (lines.length > 5) {
-      // Just take first 5 non-empty lines for now
-      snippets = lines.filter(line => line.trim().length > 0).slice(0, 5);
-    } else {
-      snippets = lines;
-    }
+    const queryTerms = query.split(/\s+/).filter(term => term.length > 2);
+    const snippet = getSnippetFromContent(resource.content, queryTerms);
 
     return {
       id: resource.id,
       collection_id: resource.collectionId,
       score: result.score,
-      title: resource.title,  // Use the extracted title directly
-      snippets: snippets.join('\n'),
+      title: resource.title,
+      snippet: snippet,
       url: resource.url,
       endpointPattern: resource.endpointPattern,
       hasParameters: resource.hasParameters
@@ -730,4 +722,67 @@ export async function searchCollection(params: {
   }).filter(Boolean);
 
   return { resources: resourceResults };
+}
+
+export function getSnippetFromContent(content: string, queryTerms: string[]): string {
+  if (!content || !queryTerms || queryTerms.length === 0) {
+    return content.substring(0, 200) + (content.length > 200 ? '...' : '');
+  }
+
+  const normalizedContent = content.toLowerCase();
+  const normalizedTerms = queryTerms.map(term => term.toLowerCase());
+
+  const matchPositions: number[] = [];
+  normalizedTerms.forEach(term => {
+    let pos = normalizedContent.indexOf(term);
+    while (pos !== -1) {
+      matchPositions.push(pos);
+      pos = normalizedContent.indexOf(term, pos + 1);
+    }
+  });
+
+  if (matchPositions.length === 0) {
+    // No exact matches, return the start of the content
+    return content.substring(0, 200) + (content.length > 200 ? '...' : '');
+  }
+
+  // Sort positions and choose the most representative match
+  matchPositions.sort((a, b) => a - b);
+
+  // Better snippet extraction: Get a window around the first match
+  // but try to include additional matches if they're close
+  let primaryMatchPos = matchPositions[0];
+
+  // If we have multiple matches, try to find a good cluster of matches
+  if (matchPositions.length > 2) {
+    // Calculate distances between consecutive matches
+    const diffs = [];
+    for (let i = 1; i < matchPositions.length; i++) {
+      diffs.push({
+        pos: matchPositions[i-1],
+        diff: matchPositions[i] - matchPositions[i-1]
+      });
+    }
+
+    // Find the position with most matches in proximity (within 100 chars)
+    const matchClusters = diffs.filter(d => d.diff < 100);
+    if (matchClusters.length > 0) {
+      // Use the start of the densest cluster as our primary position
+      primaryMatchPos = matchClusters[0].pos;
+    }
+  }
+
+  // Define snippet window - make it larger to capture more context
+  const snippetLength = 300;
+  const windowStart = Math.max(0, primaryMatchPos - snippetLength / 3);
+  const windowEnd = Math.min(content.length, primaryMatchPos + snippetLength * 2/3);
+
+  // Extract snippet
+  let snippet = content.substring(windowStart, windowEnd);
+
+  // Add ellipsis if needed
+  if (windowStart > 0) snippet = '...' + snippet;
+  if (windowEnd < content.length) snippet = snippet + '...';
+
+  return snippet;
 }

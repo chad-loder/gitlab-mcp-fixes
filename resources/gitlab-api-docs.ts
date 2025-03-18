@@ -78,6 +78,54 @@ async function runDiagnostics(): Promise<void> {
   // Cast the resources to our enhanced type that includes the title field
   const resources = rawResources as unknown as ResourceContentEnhanced[];
 
+  // Export search index to JSON file
+  try {
+    const indexJson = miniSearchIndex.toJSON();
+
+    // Create logs directory at the root level (sibling to main directory)
+    const projectRoot = path.resolve(__dirname, '..', '..');
+    const logsDir = path.join(projectRoot, 'logs');
+    const diagnosticsDir = path.join(logsDir, 'diagnostics');
+
+    // Create directory structure if it doesn't exist
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
+    if (!fs.existsSync(diagnosticsDir)) {
+      fs.mkdirSync(diagnosticsDir, { recursive: true });
+    }
+
+    // Generate a timestamp for this diagnostic run
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const runDir = path.join(diagnosticsDir, `run-${timestamp}`);
+    fs.mkdirSync(runDir, { recursive: true });
+
+    // Export MiniSearch index
+    const indexOutputPath = path.join(runDir, 'minisearch-index.json');
+    fs.writeFileSync(indexOutputPath, JSON.stringify(indexJson, null, 2));
+    console.log(`\nExported MiniSearch index to: ${indexOutputPath}`);
+
+    // Export resources metadata (without full content) to help with analysis
+    const resourcesMetadata = resources.map(resource => ({
+      id: resource.id,
+      title: resource.title,
+      url: resource.url,
+      endpointPattern: resource.endpointPattern,
+      hasParameters: resource.hasParameters,
+      contentLength: resource.content.length,
+      parameterDataLength: resource.parameterData?.length || 0
+    }));
+
+    const metadataOutputPath = path.join(runDir, 'resources-metadata.json');
+    fs.writeFileSync(metadataOutputPath, JSON.stringify(resourcesMetadata, null, 2));
+    console.log(`Exported resources metadata to: ${metadataOutputPath}`);
+
+    // Store the diagnostics directory path for later use
+    const diagnosticsRunDir = runDir;
+  } catch (error) {
+    console.error(`Error exporting search diagnostics data: ${error}`);
+  }
+
   console.log(`Loaded ${resources.length} documentation files in ${duration.toFixed(2)}ms`);
   console.log('----------------------------------------------------\n');
 
@@ -397,17 +445,30 @@ async function runDiagnostics(): Promise<void> {
 
   // Track query term statistics
   const queryTermStats: Record<string, { count: number, matches: number, time: number }> = {};
+  const allQueryResults: Record<string, any[]> = {};
 
   for (const query of testQueries) {
     const searchStartTime = performance.now();
     const results = searchIndex.search(query, {
-      boost: { title: 3, parameterData: 2, content: 1 },
+      boost: { title: 12, parameterData: 3, content: 1 },
       fuzzy: 0.2,
       prefix: true,
       combineWith: 'AND'
     });
     const searchEndTime = performance.now();
     const searchDuration = searchEndTime - searchStartTime;
+
+    // Store results for export
+    allQueryResults[query] = results.slice(0, 10).map(result => {
+      const resource = resources.find(r => r.id === result.id);
+      return {
+        score: result.score,
+        id: result.id,
+        title: resource?.title || '',
+        endpointPattern: resource?.endpointPattern || null,
+        matches: result.match
+      };
+    });
 
     // Analyze query terms
     const queryTerms = query.toLowerCase().split(/\s+/)
@@ -449,6 +510,51 @@ async function runDiagnostics(): Promise<void> {
         console.log(`     MCP Call: mcp_GitLab_MCP_read_resource({ collection_id: 'gitlab-api-docs', resource_id: '${resource.id}' })`);
       });
     }
+  }
+
+  // Export test query results to the diagnostics directory
+  try {
+    // Create logs directory at the root level (sibling to main directory)
+    const projectRoot = path.resolve(__dirname, '..', '..');
+    const logsDir = path.join(projectRoot, 'logs');
+    const diagnosticsDir = path.join(logsDir, 'diagnostics');
+
+    // Find the most recent run directory
+    const dirs = fs.readdirSync(diagnosticsDir).filter(dir => dir.startsWith('run-'));
+    dirs.sort();
+    const latestRunDir = dirs.length > 0 ? path.join(diagnosticsDir, dirs[dirs.length - 1]) : null;
+
+    if (!latestRunDir) {
+      throw new Error('Could not find run directory to save query results');
+    }
+
+    // Export query results
+    const queryResultsPath = path.join(latestRunDir, 'query-results.json');
+    fs.writeFileSync(queryResultsPath, JSON.stringify(allQueryResults, null, 2));
+    console.log(`\nExported query test results to: ${queryResultsPath}`);
+
+    // Export term stats for analysis
+    const termStatsPath = path.join(latestRunDir, 'term-stats.json');
+    fs.writeFileSync(termStatsPath, JSON.stringify(queryTermStats, null, 2));
+    console.log(`Exported term statistics to: ${termStatsPath}`);
+
+    // Create a README file explaining the contents
+    const readmePath = path.join(latestRunDir, 'README.txt');
+    const readmeContent = `GitLab API Documentation Search Diagnostics
+Generated: ${new Date().toISOString()}
+
+Files in this directory:
+- minisearch-index.json: The serialized MiniSearch index for analysis
+- resources-metadata.json: Metadata about all documentation resources (without full content)
+- query-results.json: Results from test queries
+- term-stats.json: Statistics about search terms
+
+This directory is automatically generated and should be git-ignored.
+`;
+    fs.writeFileSync(readmePath, readmeContent);
+
+  } catch (error) {
+    console.error(`Error exporting query results data: ${error}`);
   }
 
   // Analyze query term effectiveness
