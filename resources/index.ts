@@ -502,6 +502,51 @@ export async function getSearchIndexForCollection(collection: ResourceCollection
           return null;
         }
 
+        // Basic stemming for English words
+        if (term.length > 3) {
+          // Handle plurals
+          if (term.endsWith('ies') && term.length > 4) {
+            term = term.substring(0, term.length - 3) + 'y';
+          } else if (term.endsWith('es') && term.length > 3) {
+            term = term.substring(0, term.length - 2);
+          } else if (term.endsWith('s') && !term.endsWith('ss') && term.length > 3) {
+            term = term.substring(0, term.length - 1);
+          }
+
+          // Handle verb forms
+          if (term.endsWith('ed') && term.length > 4) {
+            if (term.endsWith('ied') && term.length > 4) {
+              term = term.substring(0, term.length - 3) + 'y';
+            } else if (term.endsWith('ed') && term.length > 3) {
+              term = term.substring(0, term.length - 2);
+            }
+          } else if (term.endsWith('ing') && term.length > 5) {
+            // remove ing and possibly add back an 'e'
+            const stemmed = term.substring(0, term.length - 3);
+            // If removing 'ing' results in a word ending with a consonant followed by a single vowel followed
+            // by a single consonant, we double the final consonant and then remove the 'ing'
+            const doubledConsonantPattern = /[bcdfghjklmnpqrstvwxz][aeiou][bcdfghjklmnpqrstvwxz]$/;
+            if (doubledConsonantPattern.test(stemmed) && term.length > 6) {
+              term = stemmed.substring(0, stemmed.length - 1);
+            } else {
+              term = stemmed;
+            }
+          }
+
+          // Handle common suffixes
+          if (term.endsWith('ly') && term.length > 4) {
+            term = term.substring(0, term.length - 2);
+          } else if (term.endsWith('ment') && term.length > 6) {
+            term = term.substring(0, term.length - 4);
+          } else if (term.endsWith('ness') && term.length > 5) {
+            term = term.substring(0, term.length - 4);
+          } else if (term.endsWith('ity') && term.length > 5) {
+            term = term.substring(0, term.length - 3) + 'e';
+          } else if (term.endsWith('tion') && term.length > 5) {
+            term = term.substring(0, term.length - 3) + 'e';
+          }
+        }
+
         return term;
       },
 
