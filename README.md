@@ -174,6 +174,13 @@ env GITLAB_PERSONAL_ACCESS_TOKEN=your_gitlab_token GITLAB_API_URL=your_gitlab_ap
       - `body` (string): Note content
     - Returns: Details of the created note
 
+| **`list_projects`** | List accessible projects with rich filtering options 📊 | • Search/filtering: `search`, `owned`, `membership`, `archived`, `visibility`<br>• Features filtering: `with_issues_enabled`, `with_merge_requests_enabled`<br>• Sorting: `order_by`, `sort`<br>• Access control: `min_access_level`<br>• Pagination: `page`, `per_page`, `simple` | Array of projects |
+| **`list_labels`** | List all labels for a project with filtering options 🏷️ | • `project_id` (string): Project ID or path<br>• `with_counts` (optional): Include issue and merge request counts<br>• `include_ancestor_groups` (optional): Include ancestor groups<br>• `search` (optional): Filter labels by keyword | Array of labels |
+| **`get_label`** | Get a single label from a project 🏷️ | • `project_id` (string): Project ID or path<br>• `label_id` (number/string): Label ID or name<br>• `include_ancestor_groups` (optional): Include ancestor groups | Label details |
+| **`create_label`** | Create a new label in a project 🏷️➕ | • `project_id` (string): Project ID or path<br>• `name` (string): Label name<br>• `color` (string): Color in hex format (e.g., "#FF0000")<br>• `description` (optional): Label description<br>• `priority` (optional): Label priority | Created label details |
+| **`update_label`** | Update an existing label in a project 🏷️✏️ | • `project_id` (string): Project ID or path<br>• `label_id` (number/string): Label ID or name<br>• `new_name` (optional): New label name<br>• `color` (optional): New color in hex format<br>• `description` (optional): New description<br>• `priority` (optional): New priority | Updated label details |
+| **`delete_label`** | Delete a label from a project 🏷️❌ | • `project_id` (string): Project ID or path<br>• `label_id` (number/string): Label ID or name | Success message |
+
 ## Environment Variable Configuration
 
 Before running the server, you need to set the following environment variables:
