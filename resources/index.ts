@@ -10,8 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
- * Interface defining a documentation resource collection
- * A collection groups related documentation resources under a single namespace
+ * Interface for resource collection configurations
  */
 export interface ResourceCollection {
   id: string;
@@ -21,8 +20,31 @@ export interface ResourceCollection {
   getURLForFile?: (filePath: string) => string;
 }
 
-// List of available collections - populated by registered modules
-const collections: ResourceCollection[] = [];
+/**
+ * Interface for resource content objects
+ */
+export interface ResourceContent {
+  id: string;
+  collectionId: string;
+  content: string;
+  url?: string;
+  title?: string;
+  parameterData?: string;
+  endpointPattern?: string | null;
+  hasParameters?: boolean;
+}
+
+// List of all available resource collections
+export const collections: ResourceCollection[] = [];
+
+// Cache for collection contents
+const collectionContentsCache: Record<string, ResourceContent[]> = {};
+
+// Cache for collection search indices
+const searchIndicesCache: Record<string, MiniSearch<ResourceContent>> = {};
+
+// Reference to the server instance
+let serverInstance: any = null;
 
 /**
  * Register a new resource collection in the system
@@ -36,30 +58,6 @@ export function registerCollection(collection: ResourceCollection): void {
     return;
   }
   collections.push(collection);
-}
-
-/**
- * Cache structure for collection contents and search indices
- * Maintains loaded resources and search indices with timestamps
- */
-export interface CollectionCache {
-  resources: ResourceFile[];
-  searchIndex: MiniSearch<ResourceFile> | null;
-  indexTimestamp: number;
-}
-
-/**
- * Represents a single resource file within a collection
- */
-export interface ResourceFile {
-  id: string;
-  path: string;
-  content: string;
-  title: string;
-  collection: string;
-  hasParameters?: boolean;
-  parameterData?: string;
-  endpointPattern?: string;
 }
 
 /**
@@ -105,18 +103,6 @@ interface ResourceListItem {
 }
 
 /**
- * Response structure for resource content retrieval
- */
-interface ResourceContent {
-  id: string;
-  title: string;
-  content: string;
-  url?: string;
-  hasParameters?: boolean;
-  endpointPattern?: string;
-}
-
-/**
  * Response item for search results
  */
 interface SearchResult {
@@ -130,31 +116,28 @@ interface SearchResult {
   endpointPattern?: string;
 }
 
-// Cache for collection contents and search indices
-const collectionCache: Record<string, CollectionCache> = {};
-
 // Asynchronously read file
 const readFileAsync = promisify(fs.readFile);
 
 /**
- * Stopwords list specifically tailored for API documentation
- * Includes common English words and API-specific terms that aren't useful for search
+ * Common stopwords to filter out when indexing and searching API documentation
+ * Includes English stopwords, domain-specific overly common terms, and
+ * terms identified through diagnostics that appear in >90% of documents
  */
 const API_DOC_STOPWORDS = new Set([
   // Common English stopwords
-  'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'else', 'when',
-  'at', 'from', 'by', 'for', 'with', 'about', 'against', 'between', 'into',
-  'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from',
-  'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further',
-  'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
-  'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor',
-  'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can',
-  'will', 'just', 'don', 'should', 'now',
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'if', 'in',
+  'into', 'is', 'it', 'no', 'not', 'of', 'on', 'or', 'such', 'that', 'the',
+  'their', 'then', 'there', 'these', 'they', 'this', 'to', 'was', 'will', 'with',
 
   // Domain-specific overly common terms
-  'gitlab', 'api', 'v4', 'request', 'response', 'returns', 'value', 'object',
-  'data', 'example', 'parameter', 'parameters', 'required', 'optional',
-  'default', 'type', 'string', 'integer', 'boolean', 'array'
+  'api', 'gitlab', 'parameter', 'parameters', 'example', 'examples', 'response',
+  'request', 'endpoint', 'field', 'value', 'true', 'false', 'null', 'object',
+
+  // Additional stopwords identified through diagnostics (>90% document frequency)
+  'see', 'https', 'com', 'stage', 'info', 'determine', 'technical', 'writer',
+  'assigned', 'associated', 'page', 'handbook', 'product', 'writing', 'title',
+  'details'
 ]);
 
 /**
@@ -258,285 +241,332 @@ function extractEndpointPattern(content: string): string {
 }
 
 /**
- * Initialize resource handling capabilities and register MCP handlers
+ * Initializes the resource handling capability for the server.
  *
- * @param {any} mcp - The MCP server instance to register handlers with
- * @returns {Promise<void>} Promise that resolves when initialization is complete
+ * @param server The server instance to register resource handlers on
  */
-export async function initializeResources(mcp: any): Promise<void> {
-  // Register resource handling functions
-  mcp.onFunction('mcp_GitLab_MCP_list_collections', async () => {
-    return collections.map(c => ({
-      id: c.id,
-      name: c.name,
-      description: c.description
-    }));
+export function initializeResources(server: any): void {
+  serverInstance = server;
+
+  // Register handlers for resource capabilities
+  server.registerCapability('resources.list_collections', async () => {
+    return { collections };
   });
 
-  mcp.onFunction('mcp_GitLab_MCP_list_resources', async (params: ListResourcesParams) => {
-    const { collection_id } = params;
-
-    // Validate collection exists
+  server.registerCapability('resources.list_collection', async (req: { collection_id: string }) => {
+    const { collection_id } = req;
     const collection = collections.find(c => c.id === collection_id);
+
     if (!collection) {
       throw new Error(`Collection not found: ${collection_id}`);
     }
 
-    // Load or use cached resources
     const resources = await getResourcesForCollection(collection);
 
-    return resources.map(res => ({
-      id: res.id,
-      title: res.title,
-      path: res.path,
-      hasParameters: res.hasParameters,
-      endpointPattern: res.endpointPattern
-    })) as ResourceListItem[];
+    return {
+      resources: resources.map(resource => ({
+        id: resource.id,
+        collection_id: resource.collectionId,
+        url: resource.url
+      }))
+    };
   });
 
-  mcp.onFunction('mcp_GitLab_MCP_read_resource', async (params: ReadResourceParams) => {
-    const { collection_id, resource_id } = params;
-
-    // Validate collection exists
+  server.registerCapability('resources.read_resource', async (req: { collection_id: string, resource_id: string }) => {
+    const { collection_id, resource_id } = req;
     const collection = collections.find(c => c.id === collection_id);
+
     if (!collection) {
       throw new Error(`Collection not found: ${collection_id}`);
     }
 
-    // Load or use cached resources
     const resources = await getResourcesForCollection(collection);
-
-    // Find the requested resource
     const resource = resources.find(r => r.id === resource_id);
+
     if (!resource) {
       throw new Error(`Resource not found: ${resource_id}`);
     }
 
-    // Return the resource content and metadata
     return {
       id: resource.id,
-      title: resource.title,
+      collection_id: resource.collectionId,
       content: resource.content,
-      url: collection.getURLForFile ? collection.getURLForFile(resource.path) : undefined,
-      hasParameters: resource.hasParameters,
-      endpointPattern: resource.endpointPattern
-    } as ResourceContent;
+      url: resource.url
+    };
   });
 
-  mcp.onFunction('mcp_GitLab_MCP_search_resources', async (params: SearchResourcesParams) => {
-    const { collection_id, query, limit = 10 } = params;
-
-    // Validate collection exists
+  server.registerCapability('resources.search_collection', async (req: { collection_id: string, query: string, limit?: number }) => {
+    const { collection_id, query, limit = 10 } = req;
     const collection = collections.find(c => c.id === collection_id);
+
     if (!collection) {
       throw new Error(`Collection not found: ${collection_id}`);
     }
 
-    // Load or use cached resources and search index
-    const { resources, searchIndex } = await getSearchIndexForCollection(collection);
+    // Get search index and resources
+    const { searchIndex, resources } = await getSearchIndexForCollection(collection);
 
-    if (!searchIndex) {
-      throw new Error(`Search index not available for collection: ${collection_id}`);
-    }
+    // Perform the search
+    const searchResults = searchIndex.search(query);
 
-    // Perform the search with custom options
-    const searchResults = searchIndex.search(query, {
-      boost: { title: 3, parameterData: 2, content: 1 },
-      fuzzy: 0.2,
-      prefix: true,
-      combineWith: 'AND'
-    });
-
-    // Limit results if requested
-    const limitedResults = limit > 0 ? searchResults.slice(0, limit) : searchResults;
-
-    // Map search results to resources with context
-    return limitedResults.map(result => {
+    // Map results to resources with context
+    const resourceResults = searchResults.slice(0, limit).map(result => {
       const resource = resources.find(r => r.id === result.id);
-      if (!resource) return null;
 
-      // Extract a snippet of content around the match
-      const snippetContext = extractContentSnippet(resource.content, query);
+      if (!resource) {
+        return null;
+      }
+
+      // Get content around matches for context
+      let snippets: string[] = [];
+      const lines = resource.content.split('\n');
+
+      // Simple snippet extraction - could be improved with term highlighting
+      if (lines.length > 5) {
+        // Just take first 5 non-empty lines for now
+        snippets = lines.filter(line => line.trim().length > 0).slice(0, 5);
+      } else {
+        snippets = lines;
+      }
 
       return {
         id: resource.id,
-        resource_id: resource.id,    // Add alias for clarity
-        title: resource.title,
+        collection_id: resource.collectionId,
         score: result.score,
-        snippet: snippetContext,
-        url: collection.getURLForFile ? collection.getURLForFile(resource.path) : undefined,
-        hasParameters: resource.hasParameters,
-        endpointPattern: resource.endpointPattern
+        title: resource.title,  // Use the extracted title directly
+        snippets: snippets.join('\n'),
+        url: resource.url,
+        endpointPattern: resource.endpointPattern,
+        hasParameters: resource.hasParameters
       };
-    }).filter(Boolean) as SearchResult[];
+    }).filter(Boolean);
+
+    return { resources: resourceResults };
   });
 }
 
 /**
- * Get or load resources for a collection
- * Maintains a cache to avoid repeated disk reads
+ * Gets resources for a collection, using cache if available
  *
- * @param {ResourceCollection} collection - The collection to get resources for
- * @returns {Promise<ResourceFile[]>} Promise resolving to an array of resource files
+ * @param collection The collection to get resources for
+ * @returns A Promise that resolves to an array of resource content objects
  */
-export async function getResourcesForCollection(collection: ResourceCollection): Promise<ResourceFile[]> {
-  // Check if we have a cache and if it's still valid
-  const cacheMaxAgeMs = 30 * 60 * 1000; // 30 minutes
-  const now = Date.now();
+export async function getResourcesForCollection(collection: ResourceCollection): Promise<ResourceContent[]> {
+  const { id: collectionId } = collection;
 
-  if (
-    collectionCache[collection.id] &&
-    (now - collectionCache[collection.id].indexTimestamp) < cacheMaxAgeMs
-  ) {
-    return collectionCache[collection.id].resources;
+  if (!collectionContentsCache[collectionId]) {
+    collectionContentsCache[collectionId] = await loadResourcesFromCollection(collection);
   }
 
-  // Load resources from disk
-  const resources = await loadResourcesFromCollection(collection);
-
-  // Cache the results without a search index yet
-  if (!collectionCache[collection.id]) {
-    collectionCache[collection.id] = {
-      resources,
-      searchIndex: null,
-      indexTimestamp: now
-    };
-  } else {
-    collectionCache[collection.id].resources = resources;
-    collectionCache[collection.id].indexTimestamp = now;
-  }
-
-  return resources;
+  return collectionContentsCache[collectionId];
 }
 
 /**
- * Get or create search index for a collection
- * Maintains a cache of search indices to improve performance
+ * Lists all files in a directory recursively
  *
- * @param {ResourceCollection} collection - The collection to get the search index for
- * @returns {Promise<CollectionCache>} Promise resolving to the collection cache with search index
+ * @param dirPath The path of the directory to list files from
+ * @returns A Promise that resolves to an array of file paths
  */
-export async function getSearchIndexForCollection(collection: ResourceCollection): Promise<CollectionCache> {
-  // Check if we have a cache with a search index
-  if (
-    collectionCache[collection.id] &&
-    collectionCache[collection.id].searchIndex
-  ) {
-    return collectionCache[collection.id];
-  }
+async function listAllFilesInDir(dirPath: string): Promise<string[]> {
+  const allFiles: string[] = [];
 
-  // Get the resources first
-  const resources = await getResourcesForCollection(collection);
+  // Convert to absolute path if it's a relative path
+  const absoluteDirPath = path.isAbsolute(dirPath)
+    ? dirPath
+    : path.join(process.cwd(), dirPath);
 
-  // Create a new search index
-  const searchIndex = new MiniSearch<ResourceFile>({
-    fields: ['title', 'parameterData', 'content'],
-    storeFields: ['title', 'hasParameters', 'endpointPattern'],
-    searchOptions: {
-      boost: { title: 3, parameterData: 2, content: 1 },
-      fuzzy: 0.2,
-      prefix: true
-    },
-    tokenize: (text) => {
-      // Split on non-alphanumeric characters and underscores
-      return text.split(/[\s\-\/\.,;:!\?\(\)]+/).filter(Boolean);
-    },
-    processTerm: (term, _fieldName) => {
-      // Convert to lowercase
-      term = term.toLowerCase();
+  async function traverseDir(currentPath: string) {
+    const entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
 
-      // Skip stopwords
-      if (API_DOC_STOPWORDS.has(term)) {
-        return null;
+    for (const entry of entries) {
+      const fullPath = path.join(currentPath, entry.name);
+
+      if (entry.isDirectory()) {
+        await traverseDir(fullPath);
+      } else {
+        allFiles.push(fullPath);
       }
-
-      // Skip very short terms (except IDs like "id")
-      if (term.length < 3 && term !== 'id') {
-        return null;
-      }
-
-      return term;
     }
-  });
-
-  // Add all resources to the index
-  searchIndex.addAll(resources);
-
-  // Update the cache with the search index
-  if (collectionCache[collection.id]) {
-    collectionCache[collection.id].searchIndex = searchIndex;
-  } else {
-    collectionCache[collection.id] = {
-      resources,
-      searchIndex,
-      indexTimestamp: Date.now()
-    };
   }
 
-  return collectionCache[collection.id];
+  await traverseDir(absoluteDirPath);
+  return allFiles;
 }
 
 /**
- * Load all resources from a collection directory
- * Reads markdown files from the directory structure
+ * Gets or creates a search index for a collection
  *
- * @param {ResourceCollection} collection - The collection to load resources from
- * @returns {Promise<ResourceFile[]>} Promise resolving to an array of resource files
+ * @param collection The resource collection to create a search index for
+ * @returns A Promise that resolves to the search index and resources
  */
-export async function loadResourcesFromCollection(collection: ResourceCollection): Promise<ResourceFile[]> {
-  const { dirPath, id: collectionId } = collection;
-  const resources: ResourceFile[] = [];
+export async function getSearchIndexForCollection(collection: ResourceCollection): Promise<{
+  searchIndex: MiniSearch<ResourceContent>;
+  resources: ResourceContent[]
+}> {
+  const { id: collectionId } = collection;
 
-  if (!fs.existsSync(dirPath)) {
-    console.warn(`Collection directory not found: ${dirPath}`);
-    return resources;
+  if (!collectionContentsCache[collectionId]) {
+    collectionContentsCache[collectionId] = await loadResourcesFromCollection(collection);
   }
 
-  // Get all markdown files
-  const files = await listAllFiles(dirPath);
-  const markdownFiles = files.filter(file => file.endsWith('.md'));
+  let resources = collectionContentsCache[collectionId];
 
-  // Process each markdown file
-  for (const file of markdownFiles) {
-    try {
-      const content = await readFileAsync(file, 'utf8');
-      const relativePath = path.relative(dirPath, file);
+  if (!searchIndicesCache[collectionId]) {
+    // Create field extractors
+    const extractTitle = (content: string, resourceId: string): string => {
+      // Try to find an H1 heading (# Title)
+      const h1Match = content.match(/^#\s+(.+?)(?:\r?\n|$)/m);
+      if (h1Match) return h1Match[1].trim();
 
-      // Generate a hierarchical resource ID including collection and full path
-      // Replace path separators with / and remove .md extension
-      const resourceId = `${collectionId}/${relativePath.replace(/\\/g, '/').replace(/\.md$/, '')}`;
+      // Try to find an H2 heading (## Title)
+      const h2Match = content.match(/^##\s+(.+?)(?:\r?\n|$)/m);
+      if (h2Match) return h2Match[1].trim();
 
-      // Extract title using enhanced extraction logic
-      const title = extractTitle(content, path.basename(relativePath, '.md'));
+      // Default to a humanized version of the resource ID if no title found
+      const basename = resourceId.split('/').pop() || '';
+      return basename.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+    };
 
-      // Extract parameter table information
-      const parameterData = extractParameterTables(content);
+    const extractParameterData = (content: string): string => {
+      // Match markdown tables that have a header row containing "Parameter"
+      const tableRegex = /\|[^|]*Parameter[^|]*\|[^|]*\|[\s\S]*?(?=\n\n|\n#|\n$)/g;
+      const tables = content.match(tableRegex);
 
-      // Extract API endpoint pattern
-      const endpointPattern = extractEndpointPattern(content);
+      if (!tables) return '';
 
-      // Create an enhanced content that prioritizes parameter information
-      const enhancedContent = title + '\n\n' +
-                             (parameterData ? 'Parameters: ' + parameterData + '\n\n' : '') +
-                             (endpointPattern ? 'Endpoint: ' + endpointPattern + '\n\n' : '') +
-                             content;
+      // Process each table to extract parameter names and descriptions
+      return tables.map((table: string) => {
+        const rows = table.split('\n');
+        // Skip header row and separator row (first two rows of markdown table)
+        return rows.slice(2).map((row: string) => {
+          // Extract content from cells (split by | and remove leading/trailing |)
+          const cells = row.split('|').slice(1, -1).map((cell: string) => cell.trim());
+          if (cells.length >= 2) {
+            return `${cells[0]} ${cells[1]}`;
+          }
+          return '';
+        }).join(' ');
+      }).join(' ');
+    };
 
-      resources.push({
-        id: resourceId,
-        path: relativePath,
-        content: enhancedContent, // Use enhanced content for search
+    const extractEndpointPattern = (content: string): string | null => {
+      // Match common REST API endpoint patterns (HTTP method + path)
+      const endpointMatch = content.match(/\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/[a-zA-Z0-9\/_:.-]+)\b/);
+      return endpointMatch ? `${endpointMatch[1]} ${endpointMatch[2]}` : null;
+    };
+
+    // Pre-process resources to extract fields
+    resources = resources.map(resource => {
+      const title = extractTitle(resource.content, resource.id);
+      const parameterData = extractParameterData(resource.content);
+      const endpointPattern = extractEndpointPattern(resource.content);
+      const hasParameters = parameterData.length > 0;
+
+      return {
+        ...resource,
         title,
-        collection: collectionId,
-        hasParameters: parameterData.length > 0,
         parameterData,
-        endpointPattern: endpointPattern || undefined
-      });
-    } catch (error) {
-      console.error(`Error loading resource ${file}:`, error);
-    }
+        endpointPattern,
+        hasParameters
+      };
+    });
+
+    // Update cache with enriched resources
+    collectionContentsCache[collectionId] = resources;
+
+    const searchIndex = new MiniSearch({
+      idField: 'id',
+      fields: ['title', 'parameterData', 'content'],
+      storeFields: ['id', 'collectionId', 'title', 'hasParameters', 'endpointPattern', 'url'],
+
+      // Custom tokenizer that preserves identifiers with underscores
+      tokenize: (text) => {
+        // Split on spaces and other delimiters while preserving words with underscores
+        const regex = /[a-zA-Z0-9_]+|[^\s\w]+/g;
+        const matches = text.match(regex) || [];
+        return matches.filter(Boolean);
+      },
+
+      // Process terms for case normalization and stopword filtering
+      processTerm: (term, _fieldName) => {
+        // Convert to lowercase
+        term = term.toLowerCase();
+
+        // Skip common stopwords
+        if (API_DOC_STOPWORDS.has(term)) {
+          return null;
+        }
+
+        // Skip very short terms (except IDs like "id")
+        if (term.length < 3 && term !== 'id') {
+          return null;
+        }
+
+        return term;
+      },
+
+      // Default search options
+      searchOptions: {
+        boost: { title: 8, parameterData: 3, content: 1 }, // Higher boost for titles
+        fuzzy: 0.2,
+        prefix: true
+      }
+    });
+
+    // Add all resources to the index
+    searchIndex.addAll(resources);
+    searchIndicesCache[collectionId] = searchIndex;
   }
 
-  return resources;
+  return {
+    searchIndex: searchIndicesCache[collectionId],
+    resources
+  };
+}
+
+/**
+ * Loads resources from a collection, specifically targeting markdown files.
+ *
+ * @param collection The resource collection to load
+ * @returns A Promise that resolves to an array of resource content objects
+ */
+async function loadResourcesFromCollection(collection: ResourceCollection): Promise<ResourceContent[]> {
+  const resourcesPath = collection.dirPath;
+  const resourceContents: ResourceContent[] = [];
+
+  try {
+    // Get absolute directory path
+    const absoluteDirPath = path.isAbsolute(resourcesPath)
+      ? resourcesPath
+      : path.join(process.cwd(), resourcesPath);
+
+    // Get all files (these are already absolute paths)
+    const files = await listAllFilesInDir(resourcesPath);
+    const markdownFiles = files.filter(file => file.endsWith('.md'));
+
+    for (const filePath of markdownFiles) {
+      // Since filePath is already absolute, we need to get the relative path from the absolute dir
+      const relativePath = path.relative(absoluteDirPath, filePath);
+      const resourceId = `${collection.id}/${relativePath.replace(/\.md$/, '')}`;
+
+      try {
+        const fileContent = await fs.promises.readFile(filePath, 'utf8');
+
+        resourceContents.push({
+          id: resourceId,
+          collectionId: collection.id,
+          content: fileContent,
+          url: collection.getURLForFile ? collection.getURLForFile(relativePath) : undefined
+        });
+      } catch (err) {
+        console.error(`Error reading file ${filePath}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error(`Error loading resources from ${resourcesPath}:`, err);
+  }
+
+  return resourceContents;
 }
 
 /**
@@ -585,30 +615,4 @@ function extractContentSnippet(content: string, query: string): string {
   if (windowEnd < content.length) snippet = snippet + '...';
 
   return snippet;
-}
-
-/**
- * Recursively list all files in a directory
- * Traverses subdirectories to find all files
- *
- * @param {string} dir - The directory to list files from
- * @returns {Promise<string[]>} Promise resolving to an array of file paths
- */
-export async function listAllFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-
-    if (entry.isDirectory()) {
-      // Recursively process subdirectories
-      files.push(...await listAllFiles(fullPath));
-    } else {
-      // Add file to the list
-      files.push(fullPath);
-    }
-  }
-
-  return files;
 }

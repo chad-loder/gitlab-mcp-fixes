@@ -1,7 +1,7 @@
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { ResourceCollection, registerCollection, loadResourcesFromCollection, getSearchIndexForCollection } from './index.js';
+import { ResourceCollection, ResourceContent, registerCollection, getSearchIndexForCollection } from './index.js';
 import * as fs from 'fs';
 import MiniSearch from 'minisearch';
 
@@ -17,6 +17,18 @@ import MiniSearch from 'minisearch';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Interface for enhanced resource content with title property
+interface ResourceContentEnhanced {
+  id: string;
+  collectionId: string;
+  content: string;
+  url?: string;
+  hasParameters?: boolean;
+  parameterData?: string;
+  endpointPattern?: string | null;
+  title?: string;
+}
+
 /**
  * GitLab API documentation collection configuration
  * Defines the metadata and location of the GitLab API documentation resources
@@ -25,7 +37,7 @@ const GITLAB_API_DOCS: ResourceCollection = {
   id: 'gitlab-api-docs',
   name: 'GitLab API Documentation',
   description: 'Official documentation for GitLab REST API endpoints',
-  dirPath: path.join(__dirname, 'gitlab-api-docs'),
+  dirPath: 'resources/gitlab-api-docs',
 
   /**
    * Maps a local file path to its corresponding official GitLab documentation URL
@@ -52,104 +64,135 @@ export function registerGitLabApiDocs(): void {
 
 /**
  * Run diagnostic tests on the GitLab API documentation
- * Measures performance and displays detailed information about the indexing and search process
- *
- * @returns {Promise<void>} Promise that resolves when diagnostics are complete
+ * Analyzes the content, search index, and overall health of the documentation
  */
 async function runDiagnostics(): Promise<void> {
   console.log('==== GitLab API Documentation Diagnostics ====\n');
-
-  // Time the loading of resources
   console.log('Loading GitLab API documentation resources...');
-  const loadStartTime = performance.now();
-  const resources = await loadResourcesFromCollection(GITLAB_API_DOCS);
-  const loadEndTime = performance.now();
-  const loadDuration = loadEndTime - loadStartTime;
 
-  console.log(`Loaded ${resources.length} documentation files in ${loadDuration.toFixed(2)}ms`);
+  const startTime = performance.now();
+  const { resources: rawResources, searchIndex: miniSearchIndex } = await getSearchIndexForCollection(GITLAB_API_DOCS);
+  const endTime = performance.now();
+  const duration = endTime - startTime;
+
+  // Cast the resources to our enhanced type that includes the title field
+  const resources = rawResources as unknown as ResourceContentEnhanced[];
+
+  console.log(`Loaded ${resources.length} documentation files in ${duration.toFixed(2)}ms`);
   console.log('----------------------------------------------------\n');
 
-  // Resource statistics
-  let totalContentSize = 0;
-  let resourcesWithParameters = 0;
-  let resourcesWithEndpoints = 0;
-  const titleLengths: number[] = [];
+  // Analyze content statistics
+  const totalSize = resources.reduce((sum, resource: ResourceContentEnhanced) => sum + resource.content.length, 0);
+  const avgSize = totalSize / resources.length;
 
-  for (const resource of resources) {
-    totalContentSize += resource.content.length;
-    titleLengths.push(resource.title.length);
-    if (resource.hasParameters) resourcesWithParameters++;
-    if (resource.endpointPattern) resourcesWithEndpoints++;
-  }
+  // Count resources with parameter tables
+  const resourcesWithParameters = resources.filter((r: ResourceContentEnhanced) => r.hasParameters).length;
 
-  const avgContentSize = totalContentSize / resources.length;
-  const avgTitleLength = titleLengths.reduce((sum, len) => sum + len, 0) / titleLengths.length;
+  // Count resources with endpoint patterns
+  const resourcesWithEndpoints = resources.filter((r: ResourceContentEnhanced) => r.endpointPattern).length;
+
+  // Calculate average title length
+  const totalTitleLength = resources.reduce((sum, resource: ResourceContentEnhanced) => {
+    const title = resource.title ?? '';
+    return sum + title.length;
+  }, 0);
+  const avgTitleLength = totalTitleLength / resources.length;
 
   console.log('Resource Statistics:');
-  console.log(`- Total Documentation Size: ${(totalContentSize / 1024 / 1024).toFixed(2)} MB`);
-  console.log(`- Average Resource Size: ${(avgContentSize / 1024).toFixed(2)} KB`);
+  console.log(`- Total Documentation Size: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`);
+  console.log(`- Average Resource Size: ${(avgSize / 1024).toFixed(2)} KB`);
   console.log(`- Resources with Parameter Tables: ${resourcesWithParameters} (${((resourcesWithParameters / resources.length) * 100).toFixed(1)}%)`);
   console.log(`- Resources with Endpoint Patterns: ${resourcesWithEndpoints} (${((resourcesWithEndpoints / resources.length) * 100).toFixed(1)}%)`);
   console.log(`- Average Title Length: ${avgTitleLength.toFixed(1)} characters`);
   console.log('----------------------------------------------------\n');
 
-  // Analyze title and content for common terms
-  console.log('Analyzing content for potential index improvements...');
+  console.log('Analyzing content for potential index improvements...\n');
 
-  // Term frequency analysis
-  const termFrequency: Record<string, { count: number, docs: Set<string> }> = {};
-  const totalDocsCount = resources.length;
+  // Analyze term frequency for potential stopword candidates
+  const termFrequencies: Record<string, { count: number, docs: Set<string> }> = {};
 
-  // Define stopwords for content analysis
+  // Extract endpoint HTTP methods
+  const httpMethods: Record<string, number> = {};
+  resources.filter((r: ResourceContentEnhanced) => r.endpointPattern).forEach((resource: ResourceContentEnhanced) => {
+    const pattern = resource.endpointPattern as string;
+    const method = pattern.split(' ')[0];
+    httpMethods[method] = (httpMethods[method] || 0) + 1;
+  });
+
+  // Analyze parameter data length distribution
+  const paramDataLengths = resources
+    .filter((r: ResourceContentEnhanced) => r.hasParameters)
+    .map((r: ResourceContentEnhanced) => (r.parameterData || '').length);
+
+  const resourcesWithFewParameters = resources.filter((r: ResourceContentEnhanced) =>
+    r.hasParameters && (r.parameterData || '').length < 100
+  ).length;
+
+  const resourcesWithManyParameters = resources.filter((r: ResourceContentEnhanced) =>
+    r.hasParameters && (r.parameterData || '').length > 500
+  ).length;
+
+  // Analyze term frequency
   const stopWords = new Set([
     'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'else', 'when',
     'at', 'from', 'by', 'for', 'with', 'about', 'against', 'between', 'into',
     'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from',
     'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further',
-    'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
-    'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor',
-    'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can',
-    'will', 'just', 'don', 'should', 'now',
-    'gitlab', 'api', 'v4', 'request', 'response', 'returns', 'value', 'object',
-    'data', 'example', 'parameter', 'parameters', 'required', 'optional',
-    'default', 'type', 'string', 'integer', 'boolean', 'array'
+    'gitlab', 'api', 'v4', 'request', 'response', 'returns', 'value', 'object'
   ]);
 
-  // Extract and analyze terms
-  resources.forEach(resource => {
-    const allText = resource.title + ' ' +
-                   (resource.parameterData || '') + ' ' +
-                   resource.content;
-
-    // Simple tokenization - split on non-alphanumeric and filter
-    const tokens = allText.toLowerCase()
+  resources.forEach((resource: ResourceContentEnhanced) => {
+    // Process title tokens
+    const titleText = (resource.title || '');
+    const titleTokens = titleText.toLowerCase()
       .split(/[\s\-\/\.,;:!\?\(\)]+/)
-      .filter(token => token.length > 2) // Skip very short tokens
-      .filter(token => !stopWords.has(token)); // Skip stopwords
+      .filter((token: string) => token.length > 2)
+      .filter((token: string) => !stopWords.has(token));
 
-    // Count occurrences
-    const seen = new Set<string>();
-    tokens.forEach(token => {
-      if (!termFrequency[token]) {
-        termFrequency[token] = { count: 0, docs: new Set() };
+    titleTokens.forEach((token: string) => {
+      if (!termFrequencies[token]) {
+        termFrequencies[token] = { count: 0, docs: new Set() };
       }
-      termFrequency[token].count++;
-      seen.add(token);
+      termFrequencies[token].count++;
+      termFrequencies[token].docs.add(resource.id);
     });
 
-    // Count document frequency (how many docs contain this term)
-    seen.forEach(token => {
-      termFrequency[token].docs.add(resource.id);
+    // Process parameter data tokens
+    if (resource.parameterData) {
+      const paramTokens = resource.parameterData.toLowerCase().split(/\W+/)
+        .filter((token: string) => token.length > 2)
+        .filter((token: string) => !stopWords.has(token));
+
+      paramTokens.forEach((token: string) => {
+        if (!termFrequencies[token]) {
+          termFrequencies[token] = { count: 0, docs: new Set() };
+        }
+        termFrequencies[token].count++;
+        termFrequencies[token].docs.add(resource.id);
+      });
+    }
+
+    // Process content tokens
+    const contentTokens = resource.content.toLowerCase().split(/\W+/)
+      .filter((token: string) => token.length > 2)
+      .filter((token: string) => !stopWords.has(token));
+
+    contentTokens.forEach((token: string) => {
+      if (!termFrequencies[token]) {
+        termFrequencies[token] = { count: 0, docs: new Set() };
+      }
+      termFrequencies[token].count++;
+      termFrequencies[token].docs.add(resource.id);
     });
   });
 
   // Top terms by document frequency
-  const termsByDocFrequency = Object.entries(termFrequency)
+  const termsByDocFrequency = Object.entries(termFrequencies)
     .map(([term, { count, docs }]) => ({
       term,
       count,
       docCount: docs.size,
-      docFrequency: docs.size / totalDocsCount
+      docFrequency: docs.size / resources.length
     }))
     .sort((a, b) => b.docCount - a.docCount);
 
@@ -176,14 +219,6 @@ async function runDiagnostics(): Promise<void> {
 
   // Analysis of parameter data
   console.log('\nParameter Data Analysis:');
-  const resourcesWithFewParameters = resources.filter(r =>
-    r.hasParameters && r.parameterData && r.parameterData.length < 100
-  ).length;
-
-  const resourcesWithManyParameters = resources.filter(r =>
-    r.hasParameters && r.parameterData && r.parameterData.length > 500
-  ).length;
-
   console.log(`- Resources with minimal parameter data (<100 chars): ${resourcesWithFewParameters}`);
   console.log(`- Resources with extensive parameter data (>500 chars): ${resourcesWithManyParameters}`);
 
@@ -192,12 +227,12 @@ async function runDiagnostics(): Promise<void> {
 
   // Analyze stemming opportunities
   const stemGroupings: Record<string, string[]> = {};
-  Object.keys(termFrequency).forEach(term => {
+  Object.keys(termFrequencies).forEach(term => {
     // Check for common suffixes
     ['s', 'es', 'ed', 'ing'].forEach(suffix => {
       if (term.endsWith(suffix)) {
         const base = term.substring(0, term.length - suffix.length);
-        if (termFrequency[base] && base.length > 3) {
+        if (termFrequencies[base] && base.length > 3) {
           if (!stemGroupings[base]) {
             stemGroupings[base] = [base];
           }
@@ -244,12 +279,13 @@ async function runDiagnostics(): Promise<void> {
 
   resources.forEach(resource => {
     // Process title terms
-    const titleTokens = resource.title.toLowerCase()
+    const titleText = (resource.title || '');
+    const titleTokens = titleText.toLowerCase()
       .split(/[\s\-\/\.,;:!\?\(\)]+/)
-      .filter(token => token.length > 2)
-      .filter(token => !stopWords.has(token));
+      .filter((token: string) => token.length > 2)
+      .filter((token: string) => !stopWords.has(token));
 
-    titleTokens.forEach(token => {
+    titleTokens.forEach((token: string) => {
       titleTerms.add(token);
       titleTokenCount++;
     });
@@ -300,7 +336,7 @@ async function runDiagnostics(): Promise<void> {
   const indexStartTime = performance.now();
 
   // Create a new search index with the same configuration as in the main code
-  const searchIndex = new MiniSearch<any>({
+  const searchIndex = new MiniSearch<ResourceContentEnhanced>({
     fields: ['title', 'parameterData', 'content'],
     storeFields: ['title', 'hasParameters', 'endpointPattern'],
     searchOptions: {
