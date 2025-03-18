@@ -2,116 +2,138 @@
 
 > **Last Updated: March 18, 2024**
 
-> **IMPORTANT**: When mixing shell commands with built-in/MCP tools, take care with filenames to avoid confusion between Homebrew's view of the filesystem and macOS's view of the filesystem. Always use absolute paths when there's potential for ambiguity.
+> **PATH HANDLING RULE**: Always use absolute paths (e.g., `/Users/username/path`) rather than relative paths or shell expansions (`~`, `.`) when passing file paths between tools. Shell expansions like `~` are not processed by MCP functions and will either cause file not found errors OR create literal directories named `~` in the current working directory. This can lead to silent failures where operations happen in the wrong location.
 
-## Critical Patterns - ALWAYS FOLLOW
+## Critical Patterns
 
-| PATTERN | EXAMPLE | REASON |
-|---------|---------|--------|
-| ALL `glab` list/view commands MUST use `--output json` | `glab mr list --output json` | Prevents pager issues, ensures consistent output |
-| NEVER assume field names, check help first | `glab mr list --help | cat` to verify fields | Field names vary between commands |
-| NEVER use numeric IDs without context | Use IID field from list output | IDs may not be consistent across views |
-| WHEN using `glab ci run` | Use `--ref` for specific branch | Different from GitHub's workflow run |
-| WHEN checking command options | ALWAYS pipe to cat: `command --help | cat` | Prevents pager interference |
-| WHEN using `glab mr view` | Get MR IID from previous list command | Don't hardcode or assume numbers |
-| WHEN not in a Git repo | Add `GITLAB_HOST=hostname` prefix | Specifies which GitLab instance to use |
+| COMMAND CONTEXT | REQUIRED PATTERN | EXAMPLE | RATIONALE |
+|-----------------|-----------------|---------|-----------|
+| List or view operations | Add `--output json` flag | `glab mr list --output json` | Prevents pager issues, ensures parseable output |
+| Field selection | Check API documentation first | `glab mr list --help | cat` | Field names vary between commands |
+| ID referencing | Use IID from list output, never raw numbers | `iid=$(glab mr list --output json | jq -r '.[0].iid')` | IIDs may not be consistent across views |
+| CI pipeline runs | Use `--ref` parameter for target branch | `glab ci run --ref main` | Required for specifying execution branch |
+| Help documentation | Add pipe to cat: `command --help | cat` | `glab mr list --help | cat` | Prevents pager interference |
+| MR operations | Use variables from previous operations | `glab mr view "$iid" --output json` | Prevents hardcoded assumptions |
+| Non-repository contexts | Add `GITLAB_HOST=hostname` prefix | `GITLAB_HOST=gitlab.example.com glab mr list` | Explicit instance targeting |
 
 ## Common Mistakes to Avoid
 
-| INCORRECT | CORRECT | WHY |
-|-----------|---------|-----|
-| `glab mr list --json id,status` | `glab mr list --output json` | Use `--output json` for full JSON output (no field selection) |
-| `glab mr view 123` | `glab mr view $iid --output json` | Don't hardcode numbers, use variables |
-| `glab ci run workflow.yml --json` | `glab ci run workflow.yml --ref main` | `--json` flag doesn't exist, use `--ref` instead |
-| `glab mr list | cat` | `glab mr list --output json --per-page N` | Piping to cat doesn't fix structure |
-| `glab mr view $id` | `glab mr view "$iid" --output json` | Always specify required JSON output format |
-| `gh` commands | `glab` commands | Different CLI tools for GitHub vs GitLab |
-| `--repo` parameter | `-R` parameter | GitLab CLI uses different parameter name |
+| ❌ INCORRECT PATTERN | ✅ CORRECT PATTERN | EXPLANATION |
+|---------------------|-------------------|-------------|
+| `glab mr list --json id,status` | `glab mr list --output json` | Use full JSON flag instead of field selection |
+| `glab mr view 123` | `glab mr view "$iid" --output json` | Use variables instead of hardcoded IDs |
+| `glab ci run workflow.yml --json` | `glab ci run workflow.yml --ref main` | Add required branch parameter |
+| `glab mr list | cat` | `glab mr list --output json --per-page 30` | Use JSON with pagination instead of text piping |
+| `glab mr view $id` | `glab mr view "$iid" --output json` | Quote variables and use correct output format |
+| `gh` commands | `glab` commands | Use GitLab-specific CLI tool |
+| `--repo` parameter | `-R` parameter | Use correct GitLab CLI parameter format |
 
 ## Core Decision Rules
 
-| WHEN | UNLESS | THEN | NOTES |
-|------|--------|------|-------|
-| Using ANY `glab` command | NEVER | Add `--output json` with list/view commands | Not all commands support this format |
-| Working with pipelines/CI | NEVER | Use `glab ci` with `--output json` where supported | Example: `glab ci list --output json` |
-| Working with files | Large multi-directory changes | Use MCP file functions | `mcp_GitLab_MCP_create_or_update_file` or `mcp_GitLab_MCP_push_files` |
-| Managing repositories | Complex template needed | Use MCP repo functions | `mcp_GitLab_MCP_create_repository`, `mcp_GitLab_MCP_fork_repository` |
-| Working with issues | N/A | Use MCP issue functions | `mcp_GitLab_MCP_create_issue` |
-| Creating MRs | Need advanced options | Use `glab mr create` command | MCP function has parameter validation issues |
-| Managing existing MRs | N/A | Use `glab mr` commands with `--output json` | `glab mr [list|view|merge|approve]` |
-| Searching GitLab | Complex filters needed | Use MCP search functions | `mcp_GitLab_MCP_search_repositories` |
-| Batch operations across repos | N/A | Use `glab` CLI commands | Allows for scripting and iteration |
-| Need to avoid interactive prompts | N/A | Use `--output json` flag with supported `glab` commands | Prevents pagers and interactive elements |
-| Not in a Git repository | N/A | Prefix commands with `GITLAB_HOST` | Ensures correct instance is used |
+### Command Selection Logic
+
+| OPERATION TYPE | CONDITION | USE THIS | AVOID THIS |
+|----------------|-----------|----------|------------|
+| Any GitLab CLI command | Command supports `--output json` flag | Add `--output json` flag | Default text output |
+| File operations (single file) | File path known | `mcp_GitLab_MCP_create_or_update_file` | Direct Git commands |
+| File operations (multiple files) | Files in same repository | `mcp_GitLab_MCP_push_files` | Multiple single-file operations |
+| Repository creation | Standard repository needed | `mcp_GitLab_MCP_create_repository` | `glab repo create` |
+| Repository forking | Fork to same GitLab instance | `mcp_GitLab_MCP_fork_repository` | `glab repo fork` |
+| Branch creation | Creating from known ref | `mcp_GitLab_MCP_create_branch` | `git branch` + `git push` |
+| Issue creation | Project ID known | `mcp_GitLab_MCP_create_issue` | `glab issue create` |
+| Merge request creation | Requires custom parameters | `glab mr create` | `mcp_GitLab_MCP_create_merge_request` |
+| Existing merge request management | MR ID/IID known | `glab mr [command] --output json` | `mcp_GitLab_MCP_get_merge_request` |
+| Repository search | Simple query needed | `mcp_GitLab_MCP_search_repositories` | `glab repo list` |
+| Comment/note addition | Issue/MR ID known | `mcp_GitLab_MCP_create_note` | `glab api` endpoints |
+| Running outside Git repo | Any command | Prefix with `GITLAB_HOST=hostname` | Default host detection |
+| Batch operations | Operating on >3 repositories | `glab` with shell scripting | MCP functions |
+
+### Parameter Selection Logic
+
+| PARAMETER CONTEXT | REQUIRED VALUES | OPTIONAL VALUES | NEVER USE |
+|-------------------|-----------------|----------------|-----------|
+| Project identifiers | Always use `project_id` | - | Numeric IDs without context |
+| MR/Issue identifiers | Always use IID (not ID) | - | Global numeric IDs |
+| File paths | Full absolute paths | - | `~` or relative paths |
+| Branch references | Explicit branch names | - | HEAD references |
+| Pagination | `--per-page` with explicit limit | `page` parameter | Unlimited result sets |
+| Authentication | Environment variables | - | Hardcoded tokens |
+| GitLab instances | `GITLAB_HOST` with port if needed | - | Default host assumptions |
+| Output format | `--output json` for all list/view | - | Default text output formats |
 
 ## GitLab CLI Non-Interactive Usage Patterns
 
-| WHEN | THEN | EXAMPLE |
-|------|------|---------|
-| Listing MRs | `glab mr list --output json` | `glab mr list --output json --per-page 30` |
-| Viewing MR details | `glab mr view <number> --output json` | `glab mr view 123 --output json` |
-| Merging MRs | `glab mr merge <number> --remove-source-branch` | `glab mr merge 123 --remove-source-branch` |
-| Listing pipeline runs | `glab ci list --output json` | `glab ci list --output json --per-page 30` |
-| Viewing pipeline details | `glab ci view <pipeline-id> --output json` | `glab ci view 12345 --output json` |
-| Running a pipeline | `glab ci run <ref> [--variables]` | `glab ci run main --variables "key:value"` |
-| API requests | `glab api <endpoint>` | `glab api projects/12345/issues` |
-| Filtering JSON output | Pipe to jq | `glab mr list --output json | jq '.[] | select(.state=="opened")'` |
+| OPERATION | COMMAND PATTERN | EXAMPLE |
+|-----------|----------------|---------|
+| List merge requests | `glab mr list --output json --per-page N` | `glab mr list --output json --per-page 30` |
+| View merge request details | `glab mr view [IID] --output json` | `glab mr view 123 --output json` |
+| Merge request approval | `glab mr merge [IID] --remove-source-branch` | `glab mr merge 123 --remove-source-branch` |
+| List pipelines | `glab ci list --output json --per-page N` | `glab ci list --output json --per-page 30` |
+| View pipeline details | `glab ci view [PIPELINE_ID] --output json` | `glab ci view 12345 --output json` |
+| Run pipeline | `glab ci run --ref [BRANCH] --variables [VARS]` | `glab ci run --ref main --variables "VAR1:value1"` |
+| Direct API access | `glab api [ENDPOINT]` | `glab api projects/12345/issues` |
+| Filter API responses | `glab api [ENDPOINT] | jq '[FILTER]'` | `glab api projects/12345/issues | jq '.[] | select(.state=="opened")'` |
 
-## Critical Guidelines for Non-Interactive GitLab CLI Usage
+## Critical Guidelines for Non-Interactive Usage
 
-| WHEN | DO THIS | AVOID THIS |
-|------|---------|------------|
-| Running any glab command | Use `--output json` flag where supported | Commands without `--output json` (may trigger pagers) |
-| Need formatted output | Pipe JSON output to jq for filtering | Parsing text output |
-| Viewing logs or content | Add output redirection or `| cat` | Direct output (may trigger pagers) |
-| Running commands that edit content | Use non-interactive flags | Commands that might open an editor |
-| Authenticating | Use `GITLAB_TOKEN` environment variable | `glab auth login` (interactive) |
-| Running in scripts/AI context | Redirect any stderr | Relying on TTY detection |
-| Using commands with confirmation | Add explicit flags like `--remove-source-branch` | Default behavior (interactive) |
-| Merging MRs | Use explicit flags like `--remove-source-branch` | Default behavior (interactive) |
-| Working with long outputs | Specify `--per-page` parameter | Unlimited results (pagination prompts) |
-| Running any git operation | Add `-c core.editor=true` or `GIT_EDITOR=true` | Default editor behavior |
-| Working with multiple GitLab instances | Always set `GITLAB_HOST` explicitly | Relying on auto-detection |
+| CONTEXT | DO THIS | DON'T DO THIS | REASON |
+|---------|---------|--------------|--------|
+| Output format | Use `--output json` flag | Use default text output | Prevents pager issues, ensures parseable data |
+| Data extraction | Use jq with JSON output | Parse text output | More reliable, handles escaping properly |
+| Log viewing | Add redirection (`| cat`) | View logs directly | Prevents interactive pager prompts |
+| Content editing | Use non-interactive flags | Allow interactive prompts | Prevents hanging in non-TTY contexts |
+| Authentication | Use environment variables | Use `glab auth login` | Environment variables work in all contexts |
+| Error handling | Capture stderr with redirection | Allow stderr to mix with stdout | Enables proper error detection |
+| Confirmations | Add explicit flags (e.g., `--remove-source-branch`) | Use default behaviors | Avoids interactive confirmation prompts |
+| Result pagination | Specify `--per-page` parameter | Request unlimited results | Prevents pagination prompts |
+| Editor invocation | Set `GIT_EDITOR=true` | Allow default editor | Prevents hanging on editor invocation |
+| GitLab instance | Set `GITLAB_HOST` explicitly | Rely on auto-detection | Ensures targeting correct instance |
 
 ## Safe Authentication Options
 
-| WHEN | THEN | EXAMPLE |
-|------|------|---------|
-| Authenticating in scripts | Use environment variables | `export GITLAB_TOKEN=your_token` |
-| Checking auth status | Check status with redirection | `glab auth status 2>&1 | grep -v "Token"` |
-| Switching accounts | Use token-based auth, not interactive login | Replace token in environment, don't use `glab auth login` |
-| Need different scopes | Set token with proper scopes in environment | Don't request scope changes interactively |
-| Working across hosts | Use host-specific config or GITLAB_HOST env variable | `GITLAB_HOST=gitlab.example.com glab repo clone group/project` |
-| Working with self-hosted GitLab | Use `GITLAB_HOST` | `GITLAB_HOST=gitlab.cybersn.com glab issue list -R group/project` |
+> **⚠️ CRITICAL SECURITY NOTE**: NEVER echo, log, or store personal access tokens in scripts, log files, or any persistent storage without explicit user permission. Tokens should be handled using secure environment variables or trusted secret management systems only. Accidental exposure of tokens can lead to unauthorized access to repositories, pipelines, and sensitive data.
+
+| AUTHENTICATION CONTEXT | RECOMMENDED APPROACH | EXAMPLE | AVOID |
+|------------------------|---------------------|---------|-------|
+| Script authentication | Environment variables | `export GITLAB_TOKEN=your_token` | Hardcoded tokens |
+| Status checking | Redirection with filtering | `glab auth status 2>&1 | grep -v "Token"` | Direct output display |
+| Account switching | Replace environment variable | `export GITLAB_TOKEN=new_token` | `glab auth login` |
+| Different token scopes | Use pre-configured tokens | Generate token with required scopes | Interactive scope changes |
+| Cross-host operations | Specify host explicitly | `GITLAB_HOST=gitlab.example.com glab repo clone group/project` | Default host inference |
+| Self-hosted GitLab | Use GITLAB_HOST with port | `GITLAB_HOST=gitlab.cybersn.com:8443 glab issue list -R group/project` | Default instance assumptions |
 
 ## MCP Function Reference
 
-| WHEN | USE THIS FUNCTION | PARAMETERS |
-|------|-------------------|------------|
-| Creating/updating a file | `mcp_GitLab_MCP_create_or_update_file` | project_id, file_path, content, commit_message, branch |
-| Getting file contents | `mcp_GitLab_MCP_get_file_contents` | project_id, file_path, [ref] |
-| Committing multiple files | `mcp_GitLab_MCP_push_files` | project_id, branch, files, commit_message |
-| Creating a repository | `mcp_GitLab_MCP_create_repository` | name, [description], [visibility] |
-| Forking a repository | `mcp_GitLab_MCP_fork_repository` | project_id, [namespace] |
-| Creating a branch | `mcp_GitLab_MCP_create_branch` | project_id, branch, [ref] |
-| Creating an issue | `mcp_GitLab_MCP_create_issue` | project_id, title, [description], [assignee_ids], [labels] |
-| Creating a MR | `mcp_GitLab_MCP_create_merge_request` | project_id, title, source_branch, target_branch, [description] |
-| Searching repositories | `mcp_GitLab_MCP_search_repositories` | search, [page], [per_page] |
-| Getting MR details | `mcp_GitLab_MCP_get_merge_request` | project_id, merge_request_iid |
-| Getting MR diffs | `mcp_GitLab_MCP_get_merge_request_diffs` | project_id, merge_request_iid |
-| Adding comments | `mcp_GitLab_MCP_create_note` | project_id, noteable_type, noteable_iid, body |
+| FUNCTION | PARAMETERS | USE CASE | NOTES |
+|----------|------------|----------|-------|
+| `mcp_GitLab_MCP_create_or_update_file` | project_id, file_path, content, commit_message, branch | Single file creation/update | File path must be absolute |
+| `mcp_GitLab_MCP_get_file_contents` | project_id, file_path, [ref] | Retrieve file content | Optional ref defaults to main/master |
+| `mcp_GitLab_MCP_push_files` | project_id, branch, files, commit_message | Multi-file commits | Use for batch operations |
+| `mcp_GitLab_MCP_create_repository` | name, [description], [visibility] | Create new repository | visibility: public, private, internal |
+| `mcp_GitLab_MCP_fork_repository` | project_id, [namespace] | Fork existing repository | Defaults to user namespace |
+| `mcp_GitLab_MCP_create_branch` | project_id, branch, [ref] | Create new branch | Optional ref defaults to default branch |
+| `mcp_GitLab_MCP_create_issue` | project_id, title, [description], [assignee_ids], [labels] | Create issue | Works with numeric ID or path format |
+| `mcp_GitLab_MCP_create_note` | project_id, noteable_type, noteable_iid, body | Add comment to issue/MR | noteable_type: 'issue' or 'merge_request' |
+| `mcp_GitLab_MCP_search_repositories` | search, [page], [per_page] | Search for repositories | Supports pagination |
+
+### Known Problematic Functions
+
+| FUNCTION | ALTERNATIVE APPROACH | REASON |
+|----------|----------------------|--------|
+| `mcp_GitLab_MCP_create_merge_request` | `glab mr create --source-branch X --target-branch Y` | Parameter validation issues |
+| `mcp_GitLab_MCP_get_merge_request` | `glab api "projects/PROJECT_ID/merge_requests/MR_IID"` | Strict parameter requirements |
 
 ## Token-Efficient Response Processing
 
-| WHEN | THEN | NOTES |
-|------|------|-------|
-| Using MCP functions | Return structured data directly | Data is already in structured JSON format |
-| Using `glab` with `--output json` | Parse JSON response | Full data structure provided |
-| Filtering `glab` output | Pipe to jq for field selection | `--output json | jq '.[] | {key: .value}'` |
-| Needing specific fields only | Process JSON output with jq | `--output json | jq 'select(.state == "opened")'` |
-| Processing large result sets | Use pagination with explicit limits | `--per-page 10` |
-| Error handling | Check exit codes and error messages | `glab` returns non-zero exit code on failure |
-| JSON response merging | Use jq to combine results | `jq -s '.[0] * .[1]'` to merge two JSON objects |
+| DATA SOURCE | PROCESSING APPROACH | EXAMPLE | BENEFIT |
+|-------------|---------------------|---------|---------|
+| MCP function response | Use structured JSON directly | Parse response object | Pre-validated data structure |
+| `glab` JSON output | Parse complete response | `glab mr list --output json | jq .` | Full data structure available |
+| Field extraction | Use jq with specific paths | `--output json | jq '.[] | {id: .iid, title: .title}'` | Minimizes response size |
+| Filtered results | Use jq with conditions | `--output json | jq '.[] | select(.state=="opened")'` | Server-side filtering not required |
+| Large data sets | Add pagination parameters | `--per-page 10 --page 1` | Prevents memory issues |
+| Error detection | Check exit codes and stderr | `if [ $? -ne 0 ]; then echo "Error"; fi` | Reliable error handling |
+| Combining responses | Use jq to merge objects | `jq -s '.[0] * .[1]'` | Creates composite responses |
 
 ## Command Cheat Sheet
 
@@ -168,45 +190,33 @@ glab api projects/12345/repository/branches | jq '.[] | select(.name == "main")'
 
 ## High-Risk Operations Requiring Extra Caution
 
-| OPERATION | RISK | REQUIRED CONFIRMATION | MITIGATION |
-|-----------|------|----------------------|------------|
-| Force pushing to protected branches | History rewriting | Explicit permission | Explain consequences of force push before executing |
-| Token handling | Security exposure | Verify token scope | Never display full tokens, use environment variables only |
-| Repository deletion | Permanent data loss | Multiple confirmations | Always ask for explicit confirmation before delete operations |
-| `mcp_GitLab_MCP_push_files` with many files | Mass changes | Review file list | Summarize all files being modified before executing |
-| Pipeline runs with variables | May trigger unwanted processes | Scope verification | Verify inputs and target branch before triggering |
-| Enterprise-level changes | Wide impact | Admin confirmation | Explicitly confirm changes affecting multiple repositories |
-| Creating webhooks | Security implications | Review endpoints | Verify webhook endpoints and request for confirmation |
-| `glab api` with POST/PATCH/DELETE | Direct API mutations | Method confirmation | Always highlight non-GET methods for special attention |
-| Switching authentication context | Wrong account actions | Context verification | Explicitly display the active user before critical operations |
-| Managing CI/CD variables | Sensitive data exposure | Explicit confirmation | Never log or display secret values, use file input when possible |
-| `glab variable delete` | Removes critical credentials | Explicit confirmation | Verify exact variable name before deletion |
+| OPERATION | RISK FACTOR | REQUIRED SAFEGUARDS | IMPLEMENTATION APPROACH |
+|-----------|-------------|---------------------|-------------------------|
+| Force push to protected branches | History rewriting | Explicit permission | Clearly explain consequences before execution |
+| Token handling | Security exposure | Token scope verification | Use environment variables, never display full tokens |
+| Repository deletion | Permanent data loss | Multiple confirmations | Require explicit written confirmation before proceeding |
+| Batch file operations | Mass changes | File list review | Summarize all affected files before execution |
+| Pipeline triggering | Process initiation | Branch verification | Verify target branch and variables before running |
+| Enterprise-level changes | Wide-reaching impact | Admin confirmation | Document all affected repositories before proceeding |
+| Webhook creation | Security implications | Endpoint verification | Validate webhook destination URLs |
+| Mutation API calls | Direct data changes | Method confirmation | Highlight all POST/PATCH/DELETE operations for review |
+| Authentication context changes | Wrong account actions | Identity verification | Display current user before each critical operation |
+| Secret management | Credential exposure | Value masking | Use file input rather than command-line parameters |
+| Variable deletion | Lost configuration | Name confirmation | Verify exact variable name before deletion |
 
 ## GitLab Variables (Secrets) Management
 
-| WHEN | THEN | EXAMPLE | NOTES |
-|------|------|---------|-------|
-| Listing variables | Use `glab variable list` | `glab variable list -g group_id` | Group or project scoped |
-| Setting a variable | Use `glab variable create` with value redirection | `glab variable create API_KEY < key.txt` | Never include secret values in command line |
-| Setting from environment | Use shell variable redirection | `echo $VALUE | glab variable create SECRET_NAME` | Prevents secret from appearing in command history |
-| Deleting a variable | Use `glab variable delete` | `glab variable delete DEPRECATED_KEY` | Get confirmation before deletion |
-| Group variables | Add `-g` flag | `glab variable list -g my-group-id` | Requires group admin permissions |
-| Environment variables | Add `-e` flag | `glab variable create API_KEY -e production < key.txt` | Only affects specified environment |
-| Using variables in CI/CD | Reference with `$VARIABLE_NAME` | `$API_TOKEN` | Never log pipeline runs with secret outputs |
-| Rotating variables | Update with same name | `glab variable create API_KEY < new_key.txt` | Consider updating dependent pipelines |
+| OPERATION | COMMAND PATTERN | EXAMPLE | SECURITY CONSIDERATION |
+|-----------|----------------|---------|------------------------|
+| List variables | `glab variable list [scope]` | `glab variable list -g group_id` | Group/project scope affects visibility |
+| Create variable | Redirect from file | `glab variable create API_KEY < key.txt` | Never include values in command line |
+| Set from environment | Shell redirection | `echo $VALUE | glab variable create SECRET_NAME` | Prevents command history exposure |
+| Delete variable | Explicit name | `glab variable delete VARIABLE_NAME` | Get confirmation before proceeding |
+| Group-level variables | Add `-g` flag | `glab variable list -g my-group-id` | Requires appropriate permissions |
+| Environment variables | Add `-e` flag | `glab variable create API_KEY -e production < key.txt` | Affects specific environment only |
+| Rotating credentials | Update existing name | `glab variable create API_KEY < new_key.txt` | Check dependent pipelines |
 
-## Secure Temporary File Pattern for Secrets
-
-| WHEN | THEN | EXAMPLE | SECURITY PROPERTIES |
-|------|------|---------|---------------------|
-| Need to set GitLab variables | Use temporary file pattern | See tested pattern below | No bash history exposure, no ps exposure |
-| Need to authenticate API calls | Use temporary file for token | `export GITLAB_TOKEN=$(cat "$tokenFile")` | Token not visible in command args |
-| Need to pass secrets to commands | Use file redirection | `glab variable create KEY < "$secretFile"` | Secret not visible in process list |
-| Using secrets in scripts | Create temp files with proper permissions | `secretFile=$(mktemp -t tmp_token)` | Mode 600, system temp dir |
-| Creating temp files | Use system temp dir | `mktemp -t prefix` | Not in working directory |
-| Cleaning up after use | Remove immediately | `rm -f "$secretFile"` | Prevents leakage |
-
-### Tested Secure Pattern
+### Secure Temporary File Pattern
 
 ```bash
 # Step 1: Create secure temporary file (mode 600 by default)
@@ -223,124 +233,59 @@ glab variable create SECRET_NAME < "$secretFile"
 rm -f "$secretFile" && echo "Secret set and temp file removed"
 ```
 
-### Exception: Random Secret Generation
-
-For generating random secrets, use process substitution to avoid any temporary files:
+### Random Secret Generation Pattern
 
 ```bash
 # Generate random secret with standardized length (32-64 chars) and pipe directly to glab
 glab variable create API_KEY < <(pwgen -s $(( (RANDOM % (64 - 32 + 1)) + 32 )) 1)
-
-# No cleanup needed - nothing written to disk
 ```
 
-This pattern:
-1. Avoids any file creation (more secure than temp files)
-2. Creates cryptographically strong random secrets between 32-64 characters (industry standard)
-3. Never exposes the secret value in history, process list, or on disk
-4. Eliminates the need for cleanup
+## MCP Known Issues and Workarounds
 
-> **NOTE**: Always use the 32-64 character range unless the context explicitly requires different lengths. This range provides sufficient entropy for virtually all GitLab CI/CD variables and API tokens.
+| ISSUE | AFFECTED COMPONENT | WORKAROUND | TECHNICAL DETAILS |
+|-------|-------------------|------------|-------------------|
+| Parameter validation errors | `mcp_GitLab_MCP_create_merge_request` | Use `glab mr create` | Function requires undocumented parameters like `diff_refs` |
+| Strict response validation | `mcp_GitLab_MCP_get_merge_request` | Use `glab api` endpoint | Use: `glab api "projects/PROJECT_ID/merge_requests/MR_IID"` |
+| Artifact download failures | GitLab job artifacts | Use direct API with port | `glab api "projects/PROJECT_ID/jobs/JOB_ID/artifacts" > artifacts.zip` |
+| Non-standard ports | Self-hosted GitLab | Add port to host definition | Format: `GITLAB_HOST=gitlab.example.com:PORT` |
+| Server startup issues | MCP server scripts | Execute built code directly | Use `node $REPO_DIR/build/index.js` with explicit env vars |
 
-## MCP Known Issues
+### MCP Configuration for SSH-Proxied GitLab
 
-| ISSUE | WORKAROUND | DETAILS |
-|-------|------------|---------|
-| `create_merge_request` requires undocumented parameters | Use `glab mr create` instead | Accepts basic parameters but fails with validation errors for `diff_refs`, `force_remove_source_branch`, `changes_count` |
-| `get_merge_request` fails with parameter validation | Use `glab api "projects/PROJECT_ID/merge_requests/MR_IID"` | Parameter validation in MCP is stricter than documented |
-| GitLab artifact downloads fail with MCP | Use glab API with correct port | `GITLAB_HOST=hostname:port glab api "projects/PROJECT_ID/jobs/JOB_ID/artifacts" > artifacts.zip` |
-| Port specification required for some environments | Add port to GITLAB_HOST | Use `GITLAB_HOST=gitlab.example.com:PORT` format |
-| MCP server start script issues | Execute built code directly | Use `node $REPO_DIR/build/index.js` with environment variables explicitly passed |
+| REQUIREMENT | IMPLEMENTATION | EXAMPLE |
+|-------------|----------------|---------|
+| Port specification | Add port to GITLAB_HOST | `GITLAB_HOST=gitlab.example.com:8443` |
+| Artifact access | Use API with proper port | `glab api "projects/PROJECT_ID/jobs/JOB_ID/artifacts" > artifacts.zip` |
+| Pipeline verification | Check completion status first | `glab ci view $pipeline_id --output json | jq .status` |
+| Fallback strategy | CLI commands with port | Specify port in all GITLAB_HOST variables |
 
-### Fixed Issues (Working Now)
-These issues have been fixed in recent versions of the MCP server:
-- API endpoint construction (singular vs plural resource names)
-- Double `/api/v4` path handling
-- File function parameter requirements (`create_or_update_file` no longer requires `commit_id`)
-- URL encoding for path parameters
+### MCP Implementation Considerations
 
-### Working MCP Functions
+When troubleshooting MCP functions, consider these potential issues:
+1. Schema validation requirements vs. actual implementation
+2. Null-value handling in response validation
+3. Environment variable configuration errors
 
-| FUNCTION | USAGE | NOTES |
-|----------|-------|-------|
-| `mcp_GitLab_MCP_create_branch` | `project_id`, `branch`, `ref` | Creates branches successfully |
-| `mcp_GitLab_MCP_create_issue` | `project_id`, `title`, `description` | Creates issues successfully |
-| `mcp_GitLab_MCP_get_file_contents` | `project_id`, `file_path`, `ref` | Retrieves file contents successfully |
-| `mcp_GitLab_MCP_push_files` | `project_id`, `branch`, `files`, `commit_message` | Creates new files successfully |
-| `mcp_GitLab_MCP_search_repositories` | `search`, `page`, `per_page` | Searches repositories successfully |
-| `mcp_GitLab_MCP_create_note` | `project_id`, `noteable_type`, `noteable_iid`, `body` | Creates notes on issues and merge requests |
-| `mcp_GitLab_MCP_create_or_update_file` | `project_id`, `file_path`, `content`, `commit_message`, `branch` | Creates or updates files successfully |
+Recommended troubleshooting sequence:
+1. Check error message for specific validation errors
+2. Try alternative CLI command with identical parameters
+3. Use direct API endpoint if MCP function fails
+4. Use working MCP functions when available
 
-### MCP Function Alternatives
-
-| FUNCTION | ALTERNATIVE | EXAMPLE |
-|----------|-------------|---------|
-| `create_merge_request` | `glab mr create` | `GITLAB_HOST=gitlab.cybersn.com:8443 glab mr create --title "Title" --description "Description" --source-branch branch1 --target-branch branch2` |
-| `create_note` (for environments with older versions) | `glab api` | `GITLAB_HOST=gitlab.cybersn.com:8443 glab api "projects/PROJECT_ID/issues/ISSUE_IID/notes" --method POST --field "body=Comment text"` |
-| `get_merge_request` | `glab api` | `GITLAB_HOST=gitlab.cybersn.com:8443 glab api "projects/PROJECT_ID/merge_requests/MR_IID"` |
-
-### Best Practices for SSH Proxied GitLab Instances
-
-When connecting to GitLab instances via SSH port forwarding:
-
-1. Always specify the port in GITLAB_HOST: `GITLAB_HOST=gitlab.example.com:8443`
-2. For artifact downloads, use API instead of job commands: 
-   ```
-   GITLAB_HOST=gitlab.example.com:8443 glab api "projects/PROJECT_ID/jobs/JOB_ID/artifacts" > artifacts.zip
-   ```
-3. Verify pipeline completion before attempting to access artifacts
-4. If MCP functions fail, fall back to CLI commands with proper port specification
-
-### MCP Implementation Issues
-
-Some implementation challenges remain in the MCP codebase:
-
-1. Schema validation vs implementation mismatches (extra required parameters)
-2. Strict validation of response data that may contain null values
-3. Environment variable handling issues in start scripts
-
-When the MCP functions fail, examine error messages carefully to determine whether to:
-1. Use alternative CLI commands
-2. Use direct API calls
-3. Use different MCP functions that are known to work properly
-
-## MCP Running and Debugging Tips
-
-| ISSUE | SOLUTION | DETAILS |
-|-------|----------|---------|
-| MCP server not using latest code | Run built code directly | `node $REPO_DIR/build/index.js` with environment variables explicitly passed |
-| MCP functions quietly failing | Add debug logging to index.ts | Add `console.error()` calls to troubleshoot API requests |
-| npx not finding local packages | Use absolute path to built JavaScript | Avoid package resolution issues by directly executing the built file |
-| Environment variable issues | Set explicitly when running | `GITLAB_API_URL='https://gitlab.example.com:8443/api/v4' GITLAB_PERSONAL_ACCESS_TOKEN='...' node path/to/build/index.js` |
-| Incorrect API URLs | Check GITLAB_API_URL format | Ensure it includes port number and `/api/v4` path but doesn't duplicate components |
-| Server-Sent Events (SSE) connection issues | Check supergateway configuration | Ensure proper environment variables are being passed through the SSE proxy |
-
-### GitLab API URL Construction
-
-Proper GitLab API URL construction is critical for successful operations. The standard format is:
+### GitLab API URL Format
 
 ```
 https://gitlab.example.com[:PORT]/api/v4
 ```
 
-Key points:
-1. Always include the `/api/v4` path in `GITLAB_API_URL`
-2. Include port number for non-standard ports: `gitlab.example.com:8443`
-3. MCP functions should NOT add another `/api/v4` to the URL
-4. Use URL encoding for parameters in path segments
-5. Use plural form for resource types (issues, merge_requests)
+Key formatting requirements:
+- Always include `/api/v4` path in GITLAB_API_URL
+- Include port number for non-standard ports
+- Use URL encoding for path parameters
+- Use plural form for resource types (issues, merge_requests)
 
-Example of correct usage:
-```
-GITLAB_API_URL='https://gitlab.cybersn.com:8443/api/v4' 
-```
-
-With this configuration, the URL for the createNote function should be constructed as:
-```
-${GITLAB_API_URL}/projects/${encodeURIComponent(projectId)}/${noteableType}s/${noteableIid}/notes
-```
-
-Which correctly resolves to:
-```
-https://gitlab.cybersn.com:8443/api/v4/projects/group%2Fproject/issues/2/notes
+Example environment variable configuration:
+```bash
+export GITLAB_API_URL='https://gitlab.example.com:8443/api/v4'
+export GITLAB_PERSONAL_ACCESS_TOKEN='YOUR_TOKEN'
 ```
