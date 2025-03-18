@@ -4,7 +4,7 @@ import { promisify } from 'util';
 import MiniSearch from 'minisearch';
 
 // Define interfaces for resource handling
-interface ResourceCollection {
+export interface ResourceCollection {
   id: string;
   name: string;
   description: string;
@@ -12,22 +12,18 @@ interface ResourceCollection {
   getURLForFile?: (filePath: string) => string;
 }
 
-// Define resource collections
-const GITLAB_API_DOCS: ResourceCollection = {
-  id: 'gitlab-api-docs',
-  name: 'GitLab API Documentation',
-  description: 'Official documentation for GitLab REST API endpoints',
-  dirPath: path.join(__dirname, 'gitlab-api-docs'),
-  getURLForFile: (filePath: string) => {
-    // Extract the filename without extension
-    const fileName = path.basename(filePath, path.extname(filePath));
-    // Map to the official documentation URL
-    return `https://docs.gitlab.com/ee/api/${fileName}.html`;
-  }
-};
+// List of available collections - populated by registered modules
+const collections: ResourceCollection[] = [];
 
-// List of available collections
-const collections: ResourceCollection[] = [GITLAB_API_DOCS];
+// Public registry function to register a collection
+export function registerCollection(collection: ResourceCollection): void {
+  // Check for duplicate IDs
+  if (collections.find(c => c.id === collection.id)) {
+    console.warn(`Collection with ID ${collection.id} already registered. Skipping.`);
+    return;
+  }
+  collections.push(collection);
+}
 
 // Cache for collection contents and search indices
 interface CollectionCache {
@@ -36,7 +32,7 @@ interface CollectionCache {
   indexTimestamp: number;
 }
 
-interface ResourceFile {
+export interface ResourceFile {
   id: string;
   path: string;
   content: string;
@@ -194,7 +190,7 @@ export async function initializeResources(mcp: any): Promise<void> {
 }
 
 // Get or load resources for a collection
-async function getResourcesForCollection(collection: ResourceCollection): Promise<ResourceFile[]> {
+export async function getResourcesForCollection(collection: ResourceCollection): Promise<ResourceFile[]> {
   // Check if we have a cache and if it's still valid
   const cacheMaxAgeMs = 30 * 60 * 1000; // 30 minutes
   const now = Date.now();
@@ -259,7 +255,7 @@ async function getSearchIndexForCollection(collection: ResourceCollection): Prom
 }
 
 // Load all markdown files from a collection directory
-async function loadResourcesFromCollection(collection: ResourceCollection): Promise<ResourceFile[]> {
+export async function loadResourcesFromCollection(collection: ResourceCollection): Promise<ResourceFile[]> {
   const resources: ResourceFile[] = [];
 
   const files = await listAllFiles(collection.dirPath);
@@ -336,7 +332,7 @@ function extractContentSnippet(content: string, query: string): string {
 }
 
 // Recursively list all files in a directory
-async function listAllFiles(dir: string): Promise<string[]> {
+export async function listAllFiles(dir: string): Promise<string[]> {
   const dirents = await fs.promises.readdir(dir, { withFileTypes: true });
 
   const files = await Promise.all(dirents.map(dirent => {

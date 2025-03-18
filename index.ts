@@ -14,6 +14,7 @@ import { dirname, resolve } from "path";
 import fs from "fs";
 import path from "path";
 import { initializeResources } from "./resources/index.js";
+import { registerGitLabApiDocs } from "./resources/gitlab-api-docs.js";
 import {
   GitLabForkSchema,
   GitLabReferenceSchema,
@@ -1841,6 +1842,9 @@ async function runServer() {
     console.error(`GitLab MCP Server v${SERVER_VERSION}`);
     console.error(`API URL: ${GITLAB_API_URL}`);
     console.error("========================");
+
+    // Register the GitLab API documentation collection
+    registerGitLabApiDocs();
 
     // Initialize resources before connecting the transport
     await initializeResources(server);
