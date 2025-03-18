@@ -9,6 +9,7 @@ import { fileURLToPath } from "url";
 import { dirname } from "path";
 import fs from "fs";
 import path from "path";
+import { initializeResources } from "./resources/index.js";
 import { GitLabForkSchema, GitLabReferenceSchema, GitLabRepositorySchema, GitLabIssueSchema, GitLabMergeRequestSchema, GitLabContentSchema, GitLabDirectoryContentSchema, GitLabCreateUpdateFileResponseSchema, GitLabSearchResponseSchema, GitLabTreeSchema, GitLabCommitSchema, GitLabNamespaceSchema, GitLabNamespaceExistsResponseSchema, GitLabProjectSchema, CreateOrUpdateFileSchema, SearchRepositoriesSchema, CreateRepositorySchema, GetFileContentsSchema, PushFilesSchema, CreateIssueSchema, CreateMergeRequestSchema, ForkRepositorySchema, CreateBranchSchema, GitLabMergeRequestDiffSchema, GetMergeRequestSchema, GetMergeRequestDiffsSchema, UpdateMergeRequestSchema, ListIssuesSchema, GetIssueSchema, UpdateIssueSchema, DeleteIssueSchema, GitLabIssueLinkSchema, GitLabIssueWithLinkDetailsSchema, ListIssueLinksSchema, GetIssueLinkSchema, CreateIssueLinkSchema, DeleteIssueLinkSchema, ListNamespacesSchema, GetNamespaceSchema, VerifyNamespaceSchema, GetProjectSchema, ListProjectsSchema, CreateNoteSchema, } from "./schemas.js";
 /**
  * Read version from package.json
@@ -31,7 +32,34 @@ const server = new Server({
     version: SERVER_VERSION,
 }, {
     capabilities: {
-        tools: {},
+        tools: {
+            // Add resource tools
+            "mcp_GitLab_MCP_list_collections": {
+                description: "List all available documentation collections",
+                parameters: zodToJsonSchema(z.object({})),
+            },
+            "mcp_GitLab_MCP_list_resources": {
+                description: "List all resources in a specific collection",
+                parameters: zodToJsonSchema(z.object({
+                    collection_id: z.string().describe("The ID of the collection to list resources from"),
+                })),
+            },
+            "mcp_GitLab_MCP_read_resource": {
+                description: "Read the content of a specific resource",
+                parameters: zodToJsonSchema(z.object({
+                    collection_id: z.string().describe("The ID of the collection containing the resource"),
+                    resource_id: z.string().describe("The ID of the resource to read"),
+                })),
+            },
+            "mcp_GitLab_MCP_search_resources": {
+                description: "Search for content within a collection's resources",
+                parameters: zodToJsonSchema(z.object({
+                    collection_id: z.string().describe("The ID of the collection to search in"),
+                    query: z.string().describe("The search query to find in resources"),
+                    limit: z.number().optional().describe("Maximum number of results to return (default: 10)"),
+                })),
+            },
+        },
     },
 });
 const GITLAB_PERSONAL_ACCESS_TOKEN = process.env.GITLAB_PERSONAL_ACCESS_TOKEN;
@@ -1315,6 +1343,8 @@ async function runServer() {
         console.error(`GitLab MCP Server v${SERVER_VERSION}`);
         console.error(`API URL: ${GITLAB_API_URL}`);
         console.error("========================");
+        // Initialize resources before connecting the transport
+        await initializeResources(server);
         const transport = new StdioServerTransport();
         await server.connect(transport);
         console.error("GitLab MCP Server running on stdio");
