@@ -348,7 +348,7 @@ export const GitLabMergeRequestSchema = z.object({
 
 // API Operation Parameter Schemas
 const ProjectParamsSchema = z.object({
-  project_id: z.string().describe("Project ID or URL-encoded path"), // Changed from owner/repo to match GitLab API
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"), // Updated description
 });
 
 export const CreateOrUpdateFileSchema = ProjectParamsSchema.extend({
@@ -437,7 +437,7 @@ export const CreateMergeRequestSchema = ProjectParamsSchema.extend({
 });
 
 export const ForkRepositorySchema = ProjectParamsSchema.extend({
-  namespace: z.string().optional().describe("Namespace to fork to (full path)"),
+  namespace: z.string().optional().describe("Namespace to fork to (full path of group or username)"),
 });
 
 export const CreateBranchSchema = ProjectParamsSchema.extend({
@@ -494,7 +494,7 @@ export const GetMergeRequestDiffsSchema = GetMergeRequestSchema.extend({
 });
 
 export const CreateNoteSchema = z.object({
-  project_id: z.string().describe("Project ID or namespace/project_path"),
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"),
   noteable_type: z
     .enum(["issue", "merge_request"])
     .describe("Type of noteable (issue or merge_request)"),
@@ -504,7 +504,7 @@ export const CreateNoteSchema = z.object({
 
 // Issues API operation schemas
 export const ListIssuesSchema = z.object({
-  project_id: z.string().describe("Project ID or URL-encoded path"),
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"),
   assignee_id: z.number().optional().describe("Return issues assigned to the given user ID"),
   assignee_username: z.string().optional().describe("Return issues assigned to the given username"),
   author_id: z.number().optional().describe("Return issues created by the given user ID"),
@@ -526,12 +526,12 @@ export const ListIssuesSchema = z.object({
 });
 
 export const GetIssueSchema = z.object({
-  project_id: z.string().describe("Project ID or URL-encoded path"),
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"),
   issue_iid: z.number().describe("The internal ID of the project issue"),
 });
 
 export const UpdateIssueSchema = z.object({
-  project_id: z.string().describe("Project ID or URL-encoded path"),
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"),
   issue_iid: z.number().describe("The internal ID of the project issue"),
   title: z.string().optional().describe("The title of the issue"),
   description: z.string().optional().describe("The description of the issue"),
@@ -546,7 +546,7 @@ export const UpdateIssueSchema = z.object({
 });
 
 export const DeleteIssueSchema = z.object({
-  project_id: z.string().describe("Project ID or URL-encoded path"),
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"),
   issue_iid: z.number().describe("The internal ID of the project issue"),
 });
 
@@ -558,26 +558,26 @@ export const GitLabIssueLinkSchema = z.object({
 });
 
 export const ListIssueLinksSchema = z.object({
-  project_id: z.string().describe("Project ID or URL-encoded path"),
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"),
   issue_iid: z.number().describe("The internal ID of a project's issue"),
 });
 
 export const GetIssueLinkSchema = z.object({
-  project_id: z.string().describe("Project ID or URL-encoded path"),
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"),
   issue_iid: z.number().describe("The internal ID of a project's issue"),
   issue_link_id: z.number().describe("ID of an issue relationship"),
 });
 
 export const CreateIssueLinkSchema = z.object({
-  project_id: z.string().describe("Project ID or URL-encoded path"),
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"),
   issue_iid: z.number().describe("The internal ID of a project's issue"),
-  target_project_id: z.string().describe("The ID or URL-encoded path of a target project"),
+  target_project_id: z.string().describe("The ID or namespace/project path of a target project"),
   target_issue_iid: z.number().describe("The internal ID of a target project's issue"),
   link_type: z.enum(['relates_to', 'blocks', 'is_blocked_by']).optional().describe("The type of the relation, defaults to relates_to"),
 });
 
 export const DeleteIssueLinkSchema = z.object({
-  project_id: z.string().describe("Project ID or URL-encoded path"),
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"),
   issue_iid: z.number().describe("The internal ID of a project's issue"),
   issue_link_id: z.number().describe("The ID of an issue relationship"),
 });
@@ -600,7 +600,7 @@ export const VerifyNamespaceSchema = z.object({
 
 // Project API operation schemas
 export const GetProjectSchema = z.object({
-  project_id: z.string().describe("Project ID or URL-encoded path"),
+  project_id: z.string().describe("Project ID or namespace/project path (e.g., '123' or 'group/project')"),
 });
 
 export const ListProjectsSchema = z.object({
