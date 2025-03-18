@@ -1,7 +1,7 @@
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { ResourceCollection, ResourceContent, registerCollection, getSearchIndexForCollection } from './index.js';
+import { ResourceCollection, ResourceContent, registerCollection, getSearchIndexForCollection, API_DOC_STOPWORDS, createStopwordsSet } from './index.js';
 import * as fs from 'fs';
 import MiniSearch from 'minisearch';
 
@@ -38,6 +38,12 @@ const GITLAB_API_DOCS: ResourceCollection = {
   name: 'GitLab API Documentation',
   description: 'Official documentation for GitLab REST API endpoints',
   dirPath: 'resources/gitlab-api-docs',
+
+  // GitLab-specific stopwords to extend the base API_DOC_STOPWORDS
+  stopwords: createStopwordsSet(API_DOC_STOPWORDS, [
+    // Add GitLab-specific terms that should be filtered out
+    'gitlab', 'repository', 'repositories', 'project', 'projects', 'branch', 'branches'
+  ]),
 
   /**
    * Maps a local file path to its corresponding official GitLab documentation URL
@@ -181,13 +187,7 @@ async function runDiagnostics(): Promise<void> {
   ).length;
 
   // Analyze term frequency
-  const stopWords = new Set([
-    'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'else', 'when',
-    'at', 'from', 'by', 'for', 'with', 'about', 'against', 'between', 'into',
-    'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from',
-    'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further',
-    'gitlab', 'api', 'v4', 'request', 'response', 'returns', 'value', 'object'
-  ]);
+  const stopWords = GITLAB_API_DOCS.stopwords || API_DOC_STOPWORDS;
 
   resources.forEach((resource: ResourceContentEnhanced) => {
     // Process title tokens
@@ -400,13 +400,8 @@ async function runDiagnostics(): Promise<void> {
       // Convert to lowercase
       term = term.toLowerCase();
 
-      // Skip common stopwords
-      const API_DOC_STOPWORDS = new Set([
-        'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'else', 'when',
-        'gitlab', 'api', 'parameter', 'parameters', 'example'
-      ]);
-
-      if (API_DOC_STOPWORDS.has(term)) {
+      // Skip common stopwords - use the GitLab-specific ones
+      if (GITLAB_API_DOCS.stopwords?.has(term)) {
         return null;
       }
 
@@ -475,23 +470,8 @@ async function runDiagnostics(): Promise<void> {
       .filter(term => term.length > 2)
       .filter(term => {
         // Define stopwords for query analysis
-        const API_DOC_STOPWORDS = new Set([
-          // Common English stopwords
-          'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'if', 'in',
-          'into', 'is', 'it', 'no', 'not', 'of', 'on', 'or', 'such', 'that', 'the',
-          'their', 'then', 'there', 'these', 'they', 'this', 'to', 'was', 'will', 'with',
-          'when', 'else',
-
-          // Domain-specific terms
-          'api', 'gitlab', 'parameter', 'parameters', 'example', 'examples', 'response',
-          'request', 'endpoint', 'field', 'value', 'true', 'false', 'null', 'object',
-
-          // High-frequency terms from diagnostics
-          'see', 'https', 'com', 'stage', 'info', 'determine', 'technical', 'writer',
-          'assigned', 'associated', 'page', 'handbook', 'product', 'writing', 'title',
-          'details'
-        ]);
-        return !API_DOC_STOPWORDS.has(term);
+        const API_DOC_STOPWORDS_DIAGNOSTIC = GITLAB_API_DOCS.stopwords || API_DOC_STOPWORDS;
+        return !API_DOC_STOPWORDS_DIAGNOSTIC.has(term);
       });
 
     queryTerms.forEach(term => {

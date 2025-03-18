@@ -18,6 +18,7 @@ export interface ResourceCollection {
   description: string;
   dirPath: string;
   getURLForFile?: (filePath: string) => string;
+  stopwords?: Set<string>; // Optional set of collection-specific stopwords
 }
 
 /**
@@ -121,14 +122,23 @@ const readFileAsync = promisify(fs.readFile);
 
 /**
  * Common stopwords to filter out when indexing and searching API documentation
- * Includes English stopwords, domain-specific overly common terms, and
- * terms identified through diagnostics that appear in >90% of documents
+ * Base set of stopwords that apply to all resource collections
  */
-const API_DOC_STOPWORDS = new Set([
+export const BASE_STOPWORDS = new Set([
   // Common English stopwords
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'if', 'in',
   'into', 'is', 'it', 'no', 'not', 'of', 'on', 'or', 'such', 'that', 'the',
   'their', 'then', 'there', 'these', 'they', 'this', 'to', 'was', 'will', 'with',
+  'when', 'else', 'how', 'what', 'where', 'who', 'why'
+]);
+
+/**
+ * Common API and technical documentation stopwords
+ * These apply to API documentation collections specifically
+ */
+export const API_DOC_STOPWORDS = new Set([
+  // Start with all base stopwords
+  ...Array.from(BASE_STOPWORDS),
 
   // Domain-specific overly common terms
   'api', 'gitlab', 'parameter', 'parameters', 'example', 'examples', 'response',
@@ -142,12 +152,26 @@ const API_DOC_STOPWORDS = new Set([
 
 /**
  * General stopwords for search queries (smaller set than indexing stopwords)
+ * Used specifically for query analysis, not document indexing
  */
-const SEARCH_STOPWORDS = new Set([
-  'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'else', 'when',
-  'is', 'are', 'was', 'were', 'be', 'been', 'being',
-  'this', 'that', 'these', 'those'
+export const SEARCH_STOPWORDS = new Set([
+  ...Array.from(BASE_STOPWORDS)
 ]);
+
+/**
+ * Helper function to create a custom stopwords set for a specific collection
+ * Starts with base stopwords and adds collection-specific terms
+ *
+ * @param baseSet - The base set of stopwords to extend
+ * @param additionalTerms - Array of additional terms to add as stopwords
+ * @returns A new Set containing the combined stopwords
+ */
+export function createStopwordsSet(baseSet: Set<string> = BASE_STOPWORDS, additionalTerms: string[] = []): Set<string> {
+  return new Set([
+    ...Array.from(baseSet),
+    ...additionalTerms
+  ]);
+}
 
 /**
  * Extract the title from a markdown document
@@ -460,8 +484,9 @@ export async function getSearchIndexForCollection(collection: ResourceCollection
         // Convert to lowercase
         term = term.toLowerCase();
 
-        // Skip common stopwords
-        if (API_DOC_STOPWORDS.has(term)) {
+        // Skip common stopwords - use the collection-specific set if available
+        const collectionStopwords = collection.stopwords || API_DOC_STOPWORDS;
+        if (collectionStopwords.has(term)) {
           return null;
         }
 
