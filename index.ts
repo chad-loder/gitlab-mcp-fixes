@@ -20,6 +20,8 @@ import {
   GitLabIssueSchema,
   GitLabMergeRequestSchema,
   GitLabContentSchema,
+  GitLabFileContentSchema,
+  GitLabDirectoryContentSchema,
   GitLabCreateUpdateFileResponseSchema,
   GitLabSearchResponseSchema,
   GitLabTreeSchema,
@@ -66,6 +68,8 @@ import {
   type GitLabIssue,
   type GitLabMergeRequest,
   type GitLabContent,
+  type GitLabFileContent,
+  type GitLabDirectoryContent,
   type GitLabCreateUpdateFileResponse,
   type GitLabSearchResponse,
   type GitLabTree,
@@ -1222,140 +1226,172 @@ async function listProjects(options: z.infer<typeof ListProjectsSchema> = {}): P
   return z.array(GitLabRepositorySchema).parse(data);
 }
 
+/**
+ * Get the contents of a directory from a GitLab project
+ * 디렉토리 내용 조회 (Get directory contents)
+ *
+ * @param {string} projectId - The ID or URL-encoded path of the project
+ * @param {string} path - The path to the directory
+ * @param {string} [ref] - The name of the branch, tag or commit
+ * @returns {Promise<GitLabDirectoryContent[]>} The directory contents
+ */
+async function getDirectoryContents(
+  projectId: string,
+  path: string,
+  ref?: string
+): Promise<GitLabDirectoryContent[]> {
+  if (!ref) {
+    ref = await getDefaultBranchRef(projectId);
+  }
+
+  const url = new URL(
+    `${GITLAB_API_URL}/projects/${encodeURIComponent(
+      projectId
+    )}/repository/tree`
+  );
+
+  url.searchParams.append("path", path);
+  url.searchParams.append("ref", ref);
+
+  const response = await fetch(url.toString(), {
+    headers: DEFAULT_HEADERS,
+  });
+
+  await handleGitLabError(response);
+  return z.array(GitLabDirectoryContentSchema).parse(await response.json());
+}
+
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
-        name: "create_or_update_file",
-        description: "Create or update a single file in a GitLab project",
-        inputSchema: zodToJsonSchema(CreateOrUpdateFileSchema),
-      },
-      {
-        name: "search_repositories",
-        description: "Search for GitLab projects",
-        inputSchema: zodToJsonSchema(SearchRepositoriesSchema),
-      },
-      {
-        name: "create_repository",
-        description: "Create a new GitLab project",
-        inputSchema: zodToJsonSchema(CreateRepositorySchema),
-      },
-      {
-        name: "get_file_contents",
-        description:
-          "Get the contents of a file or directory from a GitLab project",
-        inputSchema: zodToJsonSchema(GetFileContentsSchema),
-      },
-      {
-        name: "push_files",
-        description:
-          "Push multiple files to a GitLab project in a single commit",
-        inputSchema: zodToJsonSchema(PushFilesSchema),
-      },
-      {
-        name: "create_issue",
-        description: "Create a new issue in a GitLab project",
-        inputSchema: zodToJsonSchema(CreateIssueSchema),
-      },
-      {
-        name: "create_merge_request",
-        description: "Create a new merge request in a GitLab project",
-        inputSchema: zodToJsonSchema(CreateMergeRequestSchema),
-      },
-      {
-        name: "fork_repository",
-        description:
-          "Fork a GitLab project to your account or specified namespace",
+        name: "mcp_GitLab_MCP_fork_repository",
+        description: "Fork a GitLab project to your user namespace or a specified namespace. Note: Forking is an asynchronous operation that completes in the background. The response is immediate, but the fork may still be in progress.",
         inputSchema: zodToJsonSchema(ForkRepositorySchema),
       },
       {
-        name: "create_branch",
-        description: "Create a new branch in a GitLab project",
-        inputSchema: zodToJsonSchema(CreateBranchSchema),
+        name: "mcp_GitLab_MCP_create_merge_request",
+        description: "Create a new merge request in a GitLab project to propose changes from one branch to another. Use draft=true to create a work-in-progress MR that cannot be merged until marked as ready.",
+        inputSchema: zodToJsonSchema(CreateMergeRequestSchema),
       },
       {
-        name: "get_merge_request",
-        description: "Get details of a merge request",
-        inputSchema: zodToJsonSchema(GetMergeRequestSchema),
+        name: "mcp_GitLab_MCP_get_file_contents",
+        description: "Get the contents of a file or directory from a GitLab project. Supports specific branch, tag, or commit references.",
+        inputSchema: zodToJsonSchema(GetFileContentsSchema),
       },
       {
-        name: "get_merge_request_diffs",
-        description: "Get the changes/diffs of a merge request",
-        inputSchema: zodToJsonSchema(GetMergeRequestDiffsSchema),
+        name: "mcp_GitLab_MCP_search_repositories",
+        description: "Search for GitLab projects accessible to the authenticated user. Returns projects matching the search query in name, description, or path.",
+        inputSchema: zodToJsonSchema(SearchRepositoriesSchema),
       },
       {
-        name: "update_merge_request",
-        description: "Update a merge request",
-        inputSchema: zodToJsonSchema(UpdateMergeRequestSchema),
-      },
-      {
-        name: "create_note",
-        description: "Create a new note (comment) to an issue or merge request",
+        name: "mcp_GitLab_MCP_create_note",
+        description: "Add a comment (note) to an issue or merge request in a GitLab project. Supports markdown formatting in the comment body.",
         inputSchema: zodToJsonSchema(CreateNoteSchema),
       },
       {
-        name: "list_issues",
-        description: "List issues in a GitLab project with filtering options",
+        name: "mcp_GitLab_MCP_create_branch",
+        description: "Create a new branch in a GitLab project based on an existing branch or commit reference.",
+        inputSchema: zodToJsonSchema(CreateBranchSchema),
+      },
+      {
+        name: "mcp_GitLab_MCP_create_issue",
+        description: "Create a new issue in a GitLab project. Supports markdown formatting in the description.",
+        inputSchema: zodToJsonSchema(CreateIssueSchema),
+      },
+      {
+        name: "mcp_GitLab_MCP_create_or_update_file",
+        description: "Create a new file or update an existing file in a GitLab project. Returns information about the committed file.",
+        inputSchema: zodToJsonSchema(CreateOrUpdateFileSchema),
+      },
+      {
+        name: "mcp_GitLab_MCP_push_files",
+        description: "Push multiple files to a GitLab project in a single commit. Useful for creating or updating multiple files at once.",
+        inputSchema: zodToJsonSchema(PushFilesSchema),
+      },
+      {
+        name: "mcp_GitLab_MCP_create_repository",
+        description: "Create a new GitLab project. Can be initialized with a README and set with various visibility levels.",
+        inputSchema: zodToJsonSchema(CreateRepositorySchema),
+      },
+      {
+        name: "mcp_GitLab_MCP_get_merge_request",
+        description: "Get detailed information about a specific merge request in a GitLab project.",
+        inputSchema: zodToJsonSchema(GetMergeRequestSchema),
+      },
+      {
+        name: "mcp_GitLab_MCP_get_merge_request_diffs",
+        description: "Get the changes/diffs of a merge request. Shows what code changes were made in the merge request.",
+        inputSchema: zodToJsonSchema(GetMergeRequestDiffsSchema),
+      },
+      {
+        name: "mcp_GitLab_MCP_update_merge_request",
+        description: "Update the properties of an existing merge request, such as title, description, assignees, or state.",
+        inputSchema: zodToJsonSchema(UpdateMergeRequestSchema),
+      },
+      {
+        name: "mcp_GitLab_MCP_list_issues",
+        description: "List issues in a GitLab project with extensive filtering options. Supports pagination and sorting.",
         inputSchema: zodToJsonSchema(ListIssuesSchema),
       },
       {
-        name: "get_issue",
-        description: "Get details of a specific issue in a GitLab project",
+        name: "mcp_GitLab_MCP_get_issue",
+        description: "Get detailed information about a specific issue in a GitLab project.",
         inputSchema: zodToJsonSchema(GetIssueSchema),
       },
       {
-        name: "update_issue",
-        description: "Update an issue in a GitLab project",
+        name: "mcp_GitLab_MCP_update_issue",
+        description: "Update the properties of an existing issue, such as title, description, assignees, or state.",
         inputSchema: zodToJsonSchema(UpdateIssueSchema),
       },
       {
-        name: "delete_issue",
-        description: "Delete an issue from a GitLab project",
+        name: "mcp_GitLab_MCP_delete_issue",
+        description: "Delete an issue from a GitLab project. This operation is permanent and cannot be undone.",
         inputSchema: zodToJsonSchema(DeleteIssueSchema),
       },
       {
-        name: "list_issue_links",
-        description: "List all issue links for a specific issue",
+        name: "mcp_GitLab_MCP_list_issue_links",
+        description: "List all issue links for a specific issue. Shows relationships between issues such as 'blocks', 'is blocked by', or 'relates to'.",
         inputSchema: zodToJsonSchema(ListIssueLinksSchema),
       },
       {
-        name: "get_issue_link",
-        description: "Get a specific issue link",
+        name: "mcp_GitLab_MCP_get_issue_link",
+        description: "Get details about a specific issue link relationship.",
         inputSchema: zodToJsonSchema(GetIssueLinkSchema),
       },
       {
-        name: "create_issue_link",
-        description: "Create an issue link between two issues",
+        name: "mcp_GitLab_MCP_create_issue_link",
+        description: "Create a link between two issues to establish a relationship such as 'blocks', 'is blocked by', or 'relates to'.",
         inputSchema: zodToJsonSchema(CreateIssueLinkSchema),
       },
       {
-        name: "delete_issue_link",
-        description: "Delete an issue link",
+        name: "mcp_GitLab_MCP_delete_issue_link",
+        description: "Delete a link relationship between issues.",
         inputSchema: zodToJsonSchema(DeleteIssueLinkSchema),
       },
       {
-        name: "list_namespaces",
-        description: "List all namespaces available to the current user",
+        name: "mcp_GitLab_MCP_list_namespaces",
+        description: "List all namespaces (groups and users) available to the current user. Supports searching and filtering.",
         inputSchema: zodToJsonSchema(ListNamespacesSchema),
       },
       {
-        name: "get_namespace",
-        description: "Get details of a namespace by ID or path",
+        name: "mcp_GitLab_MCP_get_namespace",
+        description: "Get detailed information about a specific namespace (group or user) by ID or path.",
         inputSchema: zodToJsonSchema(GetNamespaceSchema),
       },
       {
-        name: "verify_namespace",
-        description: "Verify if a namespace path exists",
+        name: "mcp_GitLab_MCP_verify_namespace",
+        description: "Verify if a namespace path exists. Useful for checking availability before creating projects or groups.",
         inputSchema: zodToJsonSchema(VerifyNamespaceSchema),
       },
       {
-        name: "get_project",
-        description: "Get details of a specific project",
+        name: "mcp_GitLab_MCP_get_project",
+        description: "Get detailed information about a specific GitLab project, including settings, statistics, and permissions.",
         inputSchema: zodToJsonSchema(GetProjectSchema),
       },
       {
-        name: "list_projects",
-        description: "List projects accessible by the current user",
+        name: "mcp_GitLab_MCP_list_projects",
+        description: "List GitLab projects accessible by the current user with extensive filtering options. Supports pagination and sorting.",
         inputSchema: zodToJsonSchema(ListProjectsSchema),
       },
     ],
@@ -1369,7 +1405,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     switch (request.params.name) {
-      case "fork_repository": {
+      case "mcp_GitLab_MCP_fork_repository": {
         const forkArgs = ForkRepositorySchema.parse(request.params.arguments);
         try {
           const forkedProject = await forkProject(forkArgs.project_id, forkArgs.namespace);
@@ -1388,7 +1424,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       }
 
-      case "create_branch": {
+      case "mcp_GitLab_MCP_create_branch": {
         const args = CreateBranchSchema.parse(request.params.arguments);
         let ref = args.ref;
         if (!ref) {
@@ -1405,7 +1441,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "search_repositories": {
+      case "mcp_GitLab_MCP_search_repositories": {
         const args = SearchRepositoriesSchema.parse(request.params.arguments);
         const results = await searchProjects(
           args.search,
@@ -1417,7 +1453,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "create_repository": {
+      case "mcp_GitLab_MCP_create_repository": {
         const args = CreateRepositorySchema.parse(request.params.arguments);
         const repository = await createRepository(args);
         return {
@@ -1427,19 +1463,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "get_file_contents": {
+      case "mcp_GitLab_MCP_get_file_contents": {
         const args = GetFileContentsSchema.parse(request.params.arguments);
-        const contents = await getFileContents(
-          args.project_id,
-          args.file_path,
-          args.ref
-        );
-        return {
-          content: [{ type: "text", text: JSON.stringify(contents, null, 2) }],
-        };
+        try {
+          const fileContents = await getFileContents(
+            args.project_id,
+            args.file_path,
+            args.ref
+          );
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(fileContents, null, 2) },
+            ],
+          };
+        } catch (err) {
+          // For directory listing, we need to handle differently
+          if (err instanceof Error && err.message.includes("is a tree")) {
+            const directoryContents = await getDirectoryContents(
+              args.project_id,
+              args.file_path,
+              args.ref
+            );
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(directoryContents, null, 2),
+                },
+              ],
+            };
+          }
+          throw err;
+        }
       }
 
-      case "create_or_update_file": {
+      case "mcp_GitLab_MCP_create_or_update_file": {
         const args = CreateOrUpdateFileSchema.parse(request.params.arguments);
         const result = await createOrUpdateFile(
           args.project_id,
@@ -1456,20 +1514,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "push_files": {
+      case "mcp_GitLab_MCP_push_files": {
         const args = PushFilesSchema.parse(request.params.arguments);
-        const result = await createCommit(
+
+        // Convert files to FileOperation array
+        const fileOperations: FileOperation[] = args.files.map((file) => ({
+          path: file.file_path,
+          content: file.content,
+        }));
+
+        // Create commit with files
+        const commit = await createCommit(
           args.project_id,
           args.commit_message,
           args.branch,
-          args.files.map((f) => ({ path: f.file_path, content: f.content }))
+          fileOperations
         );
+
         return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify(commit, null, 2) }],
         };
       }
 
-      case "create_issue": {
+      case "mcp_GitLab_MCP_create_issue": {
         const args = CreateIssueSchema.parse(request.params.arguments);
         const { project_id, ...options } = args;
         const issue = await createIssue(project_id, options);
@@ -1478,7 +1545,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "create_merge_request": {
+      case "mcp_GitLab_MCP_create_merge_request": {
         const args = CreateMergeRequestSchema.parse(request.params.arguments);
         const { project_id, ...options } = args;
         const mergeRequest = await createMergeRequest(project_id, options);
@@ -1489,7 +1556,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "get_merge_request": {
+      case "mcp_GitLab_MCP_get_merge_request": {
         const args = GetMergeRequestSchema.parse(request.params.arguments);
         const mergeRequest = await getMergeRequest(
           args.project_id,
@@ -1502,7 +1569,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "get_merge_request_diffs": {
+      case "mcp_GitLab_MCP_get_merge_request_diffs": {
         const args = GetMergeRequestDiffsSchema.parse(request.params.arguments);
         const diffs = await getMergeRequestDiffs(
           args.project_id,
@@ -1514,7 +1581,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "update_merge_request": {
+      case "mcp_GitLab_MCP_update_merge_request": {
         const args = UpdateMergeRequestSchema.parse(request.params.arguments);
         const { project_id, merge_request_iid, ...options } = args;
         const mergeRequest = await updateMergeRequest(
@@ -1529,7 +1596,88 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "list_namespaces": {
+      case "mcp_GitLab_MCP_create_note": {
+        const args = CreateNoteSchema.parse(request.params.arguments);
+        const { project_id, noteable_type, noteable_iid, body } = args;
+
+        const note = await createNote(
+          project_id,
+          noteable_type,
+          noteable_iid,
+          body
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(note, null, 2) }],
+        };
+      }
+
+      case "mcp_GitLab_MCP_list_issues": {
+        const args = ListIssuesSchema.parse(request.params.arguments);
+        const { project_id, ...options } = args;
+        const issues = await listIssues(project_id, options);
+        return {
+          content: [{ type: "text", text: JSON.stringify(issues, null, 2) }],
+        };
+      }
+
+      case "mcp_GitLab_MCP_get_issue": {
+        const args = GetIssueSchema.parse(request.params.arguments);
+        const issue = await getIssue(args.project_id, args.issue_iid);
+        return {
+          content: [{ type: "text", text: JSON.stringify(issue, null, 2) }],
+        };
+      }
+
+      case "mcp_GitLab_MCP_update_issue": {
+        const args = UpdateIssueSchema.parse(request.params.arguments);
+        const { project_id, issue_iid, ...options } = args;
+        const issue = await updateIssue(project_id, issue_iid, options);
+        return {
+          content: [{ type: "text", text: JSON.stringify(issue, null, 2) }],
+        };
+      }
+
+      case "mcp_GitLab_MCP_delete_issue": {
+        const args = DeleteIssueSchema.parse(request.params.arguments);
+        await deleteIssue(args.project_id, args.issue_iid);
+        return {
+          content: [{ type: "text", text: JSON.stringify({ status: "success", message: "Issue deleted successfully" }, null, 2) }],
+        };
+      }
+
+      case "mcp_GitLab_MCP_list_issue_links": {
+        const args = ListIssueLinksSchema.parse(request.params.arguments);
+        const links = await listIssueLinks(args.project_id, args.issue_iid);
+        return {
+          content: [{ type: "text", text: JSON.stringify(links, null, 2) }],
+        };
+      }
+
+      case "mcp_GitLab_MCP_get_issue_link": {
+        const args = GetIssueLinkSchema.parse(request.params.arguments);
+        const link = await getIssueLink(args.project_id, args.issue_iid, args.issue_link_id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(link, null, 2) }],
+        };
+      }
+
+      case "mcp_GitLab_MCP_create_issue_link": {
+        const args = CreateIssueLinkSchema.parse(request.params.arguments);
+        const link = await createIssueLink(args.project_id, args.issue_iid, args.target_project_id, args.target_issue_iid, args.link_type);
+        return {
+          content: [{ type: "text", text: JSON.stringify(link, null, 2) }],
+        };
+      }
+
+      case "mcp_GitLab_MCP_delete_issue_link": {
+        const args = DeleteIssueLinkSchema.parse(request.params.arguments);
+        await deleteIssueLink(args.project_id, args.issue_iid, args.issue_link_id);
+        return {
+          content: [{ type: "text", text: JSON.stringify({ status: "success", message: "Issue link deleted successfully" }, null, 2) }],
+        };
+      }
+
+      case "mcp_GitLab_MCP_list_namespaces": {
         const args = ListNamespacesSchema.parse(request.params.arguments);
         const url = new URL(`${GITLAB_API_URL}/namespaces`);
 
@@ -1559,7 +1707,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "get_namespace": {
+      case "mcp_GitLab_MCP_get_namespace": {
         const args = GetNamespaceSchema.parse(request.params.arguments);
         const url = new URL(`${GITLAB_API_URL}/namespaces/${encodeURIComponent(args.namespace_id)}`);
 
@@ -1576,7 +1724,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "verify_namespace": {
+      case "mcp_GitLab_MCP_verify_namespace": {
         const args = VerifyNamespaceSchema.parse(request.params.arguments);
         const url = new URL(`${GITLAB_API_URL}/namespaces/${encodeURIComponent(args.path)}/exists`);
 
@@ -1593,7 +1741,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "get_project": {
+      case "mcp_GitLab_MCP_get_project": {
         const args = GetProjectSchema.parse(request.params.arguments);
         const url = new URL(`${GITLAB_API_URL}/projects/${encodeURIComponent(args.project_id)}`);
 
@@ -1610,7 +1758,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "list_projects": {
+      case "mcp_GitLab_MCP_list_projects": {
         const args = ListProjectsSchema.parse(request.params.arguments);
         const url = new URL(`${GITLAB_API_URL}/projects`);
 
@@ -1631,87 +1779,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         return {
           content: [{ type: "text", text: JSON.stringify(projects, null, 2) }],
-        };
-      }
-
-      case "create_note": {
-        const args = CreateNoteSchema.parse(request.params.arguments);
-        const { project_id, noteable_type, noteable_iid, body } = args;
-
-        const note = await createNote(
-          project_id,
-          noteable_type,
-          noteable_iid,
-          body
-        );
-        return {
-          content: [{ type: "text", text: JSON.stringify(note, null, 2) }],
-        };
-      }
-
-      case "list_issues": {
-        const args = ListIssuesSchema.parse(request.params.arguments);
-        const { project_id, ...options } = args;
-        const issues = await listIssues(project_id, options);
-        return {
-          content: [{ type: "text", text: JSON.stringify(issues, null, 2) }],
-        };
-      }
-
-      case "get_issue": {
-        const args = GetIssueSchema.parse(request.params.arguments);
-        const issue = await getIssue(args.project_id, args.issue_iid);
-        return {
-          content: [{ type: "text", text: JSON.stringify(issue, null, 2) }],
-        };
-      }
-
-      case "update_issue": {
-        const args = UpdateIssueSchema.parse(request.params.arguments);
-        const { project_id, issue_iid, ...options } = args;
-        const issue = await updateIssue(project_id, issue_iid, options);
-        return {
-          content: [{ type: "text", text: JSON.stringify(issue, null, 2) }],
-        };
-      }
-
-      case "delete_issue": {
-        const args = DeleteIssueSchema.parse(request.params.arguments);
-        await deleteIssue(args.project_id, args.issue_iid);
-        return {
-          content: [{ type: "text", text: JSON.stringify({ status: "success", message: "Issue deleted successfully" }, null, 2) }],
-        };
-      }
-
-      case "list_issue_links": {
-        const args = ListIssueLinksSchema.parse(request.params.arguments);
-        const links = await listIssueLinks(args.project_id, args.issue_iid);
-        return {
-          content: [{ type: "text", text: JSON.stringify(links, null, 2) }],
-        };
-      }
-
-      case "get_issue_link": {
-        const args = GetIssueLinkSchema.parse(request.params.arguments);
-        const link = await getIssueLink(args.project_id, args.issue_iid, args.issue_link_id);
-        return {
-          content: [{ type: "text", text: JSON.stringify(link, null, 2) }],
-        };
-      }
-
-      case "create_issue_link": {
-        const args = CreateIssueLinkSchema.parse(request.params.arguments);
-        const link = await createIssueLink(args.project_id, args.issue_iid, args.target_project_id, args.target_issue_iid, args.link_type);
-        return {
-          content: [{ type: "text", text: JSON.stringify(link, null, 2) }],
-        };
-      }
-
-      case "delete_issue_link": {
-        const args = DeleteIssueLinkSchema.parse(request.params.arguments);
-        await deleteIssueLink(args.project_id, args.issue_iid, args.issue_link_id);
-        return {
-          content: [{ type: "text", text: JSON.stringify({ status: "success", message: "Issue link deleted successfully" }, null, 2) }],
         };
       }
 
