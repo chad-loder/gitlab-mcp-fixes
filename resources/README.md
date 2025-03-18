@@ -179,6 +179,39 @@ You have two options:
 
 Remember that these example credentials in the documentation are not real secrets but are used for illustration purposes only.
 
+## Enhanced Search Options
+
+When using the `mcp_GitLab_MCP_search_resources` function, you can now customize the search behavior with several advanced options:
+
+```javascript
+const searchResults = await mcp.invoke('mcp_GitLab_MCP_search_resources', {
+  collection_id: 'gitlab-api-docs',
+  query: 'create project',
+  limit: 10,                    // Optional: Maximum number of results to return (default: 10)
+  fuzzy: 0.2,                   // Optional: Fuzzy search tolerance, 0-1 (default: 0.2, 0 to disable)
+  prefix: true,                 // Optional: Whether to match prefixes (default: true)
+  fields: ['title', 'content'], // Optional: Fields to search in (default: all fields)
+  boost: {                      // Optional: Custom boost factors for specific fields
+    title: 10,                  // Higher value = more important in ranking
+    parameterData: 3,
+    content: 1
+  }
+});
+```
+
+### Customizing Search Behavior
+
+- **Fuzzy Matching**: Set `fuzzy` between 0-1 to control the tolerance for typos and slight variations. Higher values allow more variation.
+- **Prefix Matching**: Set `prefix: true` to match terms that start with the query (e.g., "proj" would match "project").
+- **Field Selection**: Use `fields` to focus search on specific parts of documents (title, parameterData, content).
+- **Boosting**: Adjust the importance of different fields with `boost`. Higher values give fields more weight in result ranking.
+
+These options allow you to fine-tune search for different use cases:
+
+- Precise API endpoint lookup: `{ fuzzy: 0, prefix: false, fields: ['endpointPattern'] }`
+- Parameter discovery: `{ boost: { parameterData: 10 } }`
+- General concept search: `{ fuzzy: 0.3, prefix: true }`
+
 ## Resources API
 
 The resources in this directory are made available through the following MCP API functions:

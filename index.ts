@@ -138,6 +138,14 @@ const server = new Server(
               collection_id: z.string().describe("The ID of the collection to search in"),
               query: z.string().describe("The search query to find in resources"),
               limit: z.number().optional().describe("Maximum number of results to return (default: 10)"),
+              fuzzy: z.number().optional().describe("Fuzzy search tolerance, between 0 and 1 (default: 0.2). Set to 0 to disable fuzzy matching."),
+              prefix: z.boolean().optional().describe("Whether to perform prefix matching (default: true)"),
+              boost: z.object({
+                title: z.number().optional().describe("Boost factor for title field (default: 8)"),
+                parameterData: z.number().optional().describe("Boost factor for parameter data field (default: 3)"),
+                content: z.number().optional().describe("Boost factor for content field (default: 1)")
+              }).optional().describe("Custom boost factors for specific fields"),
+              fields: z.array(z.enum(["title", "parameterData", "content"])).optional().describe("Fields to search in (default: all fields)")
             })
           ),
         },
@@ -1814,6 +1822,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         return {
           content: [{ type: "text", text: JSON.stringify(projects, null, 2) }],
+        };
+      }
+
+      case "mcp_GitLab_MCP_search_resources": {
+        const args = z.object({
+          collection_id: z.string(),
+          query: z.string(),
+          limit: z.number().optional(),
+          fuzzy: z.number().optional(),
+          prefix: z.boolean().optional(),
+          boost: z.object({
+            title: z.number().optional(),
+            parameterData: z.number().optional(),
+            content: z.number().optional()
+          }).optional(),
+          fields: z.array(z.enum(["title", "parameterData", "content"])).optional()
+        }).parse(request.params.arguments);
+
+        // Import the resources module and use its search function
+        const { searchCollection } = await import('./resources/index.js');
+        const result = await searchCollection(args);
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       }
 

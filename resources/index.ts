@@ -295,53 +295,21 @@ export function initializeResources(server: any): void {
     };
   });
 
-  server.registerCapability('resources.search_collection', async (req: { collection_id: string, query: string, limit?: number }) => {
-    const { collection_id, query, limit = 10 } = req;
-    const collection = collections.find(c => c.id === collection_id);
-
-    if (!collection) {
-      throw new Error(`Collection not found: ${collection_id}`);
-    }
-
-    // Get search index and resources
-    const { searchIndex, resources } = await getSearchIndexForCollection(collection);
-
-    // Perform the search
-    const searchResults = searchIndex.search(query);
-
-    // Map results to resources with context
-    const resourceResults = searchResults.slice(0, limit).map(result => {
-      const resource = resources.find(r => r.id === result.id);
-
-      if (!resource) {
-        return null;
-      }
-
-      // Get content around matches for context
-      let snippets: string[] = [];
-      const lines = resource.content.split('\n');
-
-      // Simple snippet extraction - could be improved with term highlighting
-      if (lines.length > 5) {
-        // Just take first 5 non-empty lines for now
-        snippets = lines.filter(line => line.trim().length > 0).slice(0, 5);
-      } else {
-        snippets = lines;
-      }
-
-      return {
-        id: resource.id,
-        collection_id: resource.collectionId,
-        score: result.score,
-        title: resource.title,  // Use the extracted title directly
-        snippets: snippets.join('\n'),
-        url: resource.url,
-        endpointPattern: resource.endpointPattern,
-        hasParameters: resource.hasParameters
-      };
-    }).filter(Boolean);
-
-    return { resources: resourceResults };
+  server.registerCapability('resources.search_collection', async (req: {
+    collection_id: string,
+    query: string,
+    limit?: number,
+    fuzzy?: number,
+    prefix?: boolean,
+    boost?: {
+      title?: number,
+      parameterData?: number,
+      content?: number
+    },
+    fields?: Array<'title' | 'parameterData' | 'content'>
+  }) => {
+    // Use the searchCollection function to avoid code duplication
+    return searchCollection(req);
   });
 }
 
@@ -660,4 +628,106 @@ function extractContentSnippet(content: string, query: string): string {
   if (windowEnd < content.length) snippet = snippet + '...';
 
   return snippet;
+}
+
+/**
+ * Search for resources in a collection
+ *
+ * @param params Search parameters including collection_id, query, and search options
+ * @returns Promise with search results
+ */
+export async function searchCollection(params: {
+  collection_id: string,
+  query: string,
+  limit?: number,
+  fuzzy?: number,
+  prefix?: boolean,
+  boost?: {
+    title?: number,
+    parameterData?: number,
+    content?: number
+  },
+  fields?: Array<'title' | 'parameterData' | 'content'>
+}): Promise<{ resources: any[] }> {
+  const {
+    collection_id,
+    query,
+    limit = 10,
+    fuzzy,
+    prefix,
+    boost,
+    fields
+  } = params;
+
+  const collection = collections.find(c => c.id === collection_id);
+
+  if (!collection) {
+    throw new Error(`Collection not found: ${collection_id}`);
+  }
+
+  // Get search index and resources
+  const { searchIndex, resources } = await getSearchIndexForCollection(collection);
+
+  // Setup search options using provided parameters or defaults
+  const searchOptions: any = {};
+
+  // Set fuzzy matching tolerance if specified
+  if (fuzzy !== undefined) {
+    searchOptions.fuzzy = fuzzy;
+  }
+
+  // Set prefix matching if specified
+  if (prefix !== undefined) {
+    searchOptions.prefix = prefix;
+  }
+
+  // Set field boosting if specified
+  if (boost) {
+    searchOptions.boost = {};
+    if (boost.title !== undefined) searchOptions.boost.title = boost.title;
+    if (boost.parameterData !== undefined) searchOptions.boost.parameterData = boost.parameterData;
+    if (boost.content !== undefined) searchOptions.boost.content = boost.content;
+  }
+
+  // Set fields to search in if specified
+  if (fields && fields.length > 0) {
+    searchOptions.fields = fields;
+  }
+
+  // Perform the search with configured options
+  const searchResults = searchIndex.search(query, searchOptions);
+
+  // Map results to resources with context
+  const resourceResults = searchResults.slice(0, limit).map(result => {
+    const resource = resources.find(r => r.id === result.id);
+
+    if (!resource) {
+      return null;
+    }
+
+    // Get content around matches for context
+    let snippets: string[] = [];
+    const lines = resource.content.split('\n');
+
+    // Simple snippet extraction - could be improved with term highlighting
+    if (lines.length > 5) {
+      // Just take first 5 non-empty lines for now
+      snippets = lines.filter(line => line.trim().length > 0).slice(0, 5);
+    } else {
+      snippets = lines;
+    }
+
+    return {
+      id: resource.id,
+      collection_id: resource.collectionId,
+      score: result.score,
+      title: resource.title,  // Use the extracted title directly
+      snippets: snippets.join('\n'),
+      url: resource.url,
+      endpointPattern: resource.endpointPattern,
+      hasParameters: resource.hasParameters
+    };
+  }).filter(Boolean);
+
+  return { resources: resourceResults };
 }
