@@ -45,6 +45,30 @@ rm -rf .git/
 
 This process extracts only the API documentation markdown files without the entire GitLab documentation repository, making it more manageable for our purposes.
 
+### Enhanced Search Implementation
+
+The resources use MiniSearch, a lightweight full-text search engine, configured specifically for API documentation:
+
+1. **Title Extraction**: We extract titles from the first H1 or H2 heading in the document, with fallbacks to humanized resource IDs.
+
+2. **Parameter Table Processing**: We extract parameter tables from the documentation and give them higher weight in search results. This ensures that searches for specific parameters return the most relevant documentation.
+
+3. **API Endpoint Detection**: We detect and extract REST API endpoint patterns (like `GET /api/v4/projects/:id/issues`) to make them easily searchable.
+
+4. **Custom Stopwords**: We use a curated list of stopwords specific to API documentation, eliminating common terms like "gitlab", "api", "parameter", etc. that would otherwise dominate search results.
+
+5. **Weighted Fields**: Searches prioritize matches in this order:
+   - Titles (3x weight)
+   - Parameter information (2x weight)
+   - Content (1x weight)
+
+6. **Search Optimizations**:
+   - Prefix matching enables partial word matches
+   - Fuzzy search (with 0.2 distance threshold) allows for minor typos
+   - Snippet extraction provides context around matches
+
+This implementation is optimized specifically for API documentation search, making it easier for AI clients to find relevant endpoints and parameter information.
+
 ### Syncing and Updating Documentation
 
 To update the documentation with newer versions from GitLab, you can repeat a similar process:
