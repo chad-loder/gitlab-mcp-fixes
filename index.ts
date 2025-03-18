@@ -1228,10 +1228,7 @@ async function listProjects(options: z.infer<typeof ListProjectsSchema> = {}): P
     `${GITLAB_API_URL}/projects?${params.toString()}`,
     {
       method: "GET",
-      headers: {
-        "PRIVATE-TOKEN": GITLAB_PERSONAL_ACCESS_TOKEN,
-        "Content-Type": "application/json",
-      },
+      headers: DEFAULT_HEADERS,
     }
   );
 
@@ -1822,10 +1819,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         });
 
         const response = await fetch(url.toString(), {
+          method: "GET",
           headers: DEFAULT_HEADERS,
         });
 
+        // Handle errors
         await handleGitLabError(response);
+
+        // Parse and return the data
         const data = await response.json();
         const projects = z.array(GitLabProjectSchema).parse(data);
 
