@@ -21,6 +21,16 @@ export function applyStemming(term: string, config: CollectionConfig): string {
   const stemmingConfig = config.search.termProcessing.stemming;
   let originalTerm = term;
 
+  // Special case for authorization-related terms
+  if (/^authoriz(e|ing|ed|ation|ations)$/.test(term)) {
+    return "authoriz";
+  }
+
+  // Special case for project-related terms
+  if (/^project(ion|ions|or|ors|ile|iles)$/.test(term)) {
+    return "project";
+  }
+
   // Handle verb forms first (order matters)
   if (stemmingConfig.handleVerbForms) {
     // -ing forms
@@ -44,7 +54,6 @@ export function applyStemming(term: string, config: CollectionConfig): string {
         return base;
       } else {
         // For some verbs where 'e' was dropped (make -> making)
-        // Try both with and without 'e' and return the one that exists as a word
         return base + 'e';
       }
     }
@@ -69,8 +78,12 @@ export function applyStemming(term: string, config: CollectionConfig): string {
       const base = term.slice(0, term.length - 2);
 
       // Some words need 'e' back (saved -> save)
-      // This is a simplification; a real stemmer would use a dictionary
-      return base;
+      return base + 'e';
+    }
+
+    // Handle common verb forms "use" and "used"
+    if (term === "used") {
+      return "use";
     }
   }
 
