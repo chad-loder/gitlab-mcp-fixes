@@ -4,6 +4,7 @@ import { dirname } from 'path';
 import { ResourceCollection, ResourceContent, registerCollection, getSearchIndexForCollection, API_DOC_STOPWORDS, createStopwordsSet } from './index.js';
 import * as fs from 'fs';
 import MiniSearch from 'minisearch';
+import * as porterStemmer from 'porterstem';
 
 /**
  * GitLab API Documentation Module
@@ -408,6 +409,11 @@ async function runDiagnostics(): Promise<void> {
       // Skip very short terms (except IDs like "id")
       if (term.length < 3 && term !== 'id') {
         return null;
+      }
+
+      // Apply Porter stemming for better term matching
+      if (term.length > 3) {
+        term = porterStemmer.stem(term);
       }
 
       return term;
