@@ -1,10 +1,12 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { promisify } from 'util';
 import MiniSearch from 'minisearch';
+import * as fs from 'fs';
+import { promisify } from 'util';
 import * as porterStemmer from 'porterstem';
+import { processorRegistry } from './processors/index.js';
+import { minimatch } from 'minimatch';
 // Create dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -14,6 +16,15 @@ export const collections = [];
 const collectionContentsCache = {};
 // Cache for collection search indices
 const searchIndicesCache = {};
+// Get the default chunk size from environment variable or use sensible default
+const DEFAULT_CHUNK_SIZE = parseInt(process.env.MCP_INDEXER_CHUNK_SIZE || '20', 10);
+// Validate chunk size is a reasonable number
+const getValidChunkSize = (requestedSize) => {
+    if (!requestedSize)
+        return DEFAULT_CHUNK_SIZE;
+    // Ensure chunk size is between 1 and 1000
+    return Math.max(1, Math.min(1000, requestedSize));
+};
 // Reference to the server instance
 let serverInstance = null;
 /**
@@ -77,84 +88,6 @@ export function createStopwordsSet(baseSet = BASE_STOPWORDS, additionalTerms = [
         ...Array.from(baseSet),
         ...additionalTerms
     ]);
-}
-/**
- * Extract the title from a markdown document
- * Handles GitLab-flavored markdown heading styles
- *
- * @param {string} content - The markdown content
- * @param {string} resourceId - Fallback resource ID to use if no title is found
- * @returns {string} The extracted title
- */
-function extractTitle(content, resourceId) {
-    // Look for the first H1 heading
-    const h1Match = content.match(/^#\s+(.+)$/m);
-    if (h1Match) {
-        return h1Match[1].trim();
-    }
-    // Try H2 heading if no H1
-    const h2Match = content.match(/^##\s+(.+)$/m);
-    if (h2Match) {
-        return h2Match[1].trim();
-    }
-    // Get the last part of the ID if it's a hierarchical ID
-    const simpleId = resourceId.includes('/')
-        ? resourceId.split('/').pop() || resourceId
-        : resourceId;
-    // Fallback to humanized resourceId
-    return simpleId
-        .replace(/[-_]/g, ' ')
-        .replace(/^\w|\s\w/g, match => match.toUpperCase());
-}
-/**
- * Extract parameter tables from GitLab API documentation
- * Finds markdown tables that contain parameter documentation
- *
- * @param {string} content - The markdown content
- * @returns {string} Extracted parameter information
- */
-function extractParameterTables(content) {
-    // Match markdown tables with a header row containing "Parameter"
-    const tableRegex = /\|\s*[Pp]arameter\s*\|[\s\S]+?(?=\n\n|\n#|$)/gi;
-    let parameterText = '';
-    let match;
-    while ((match = tableRegex.exec(content)) !== null) {
-        // Get the parameter table
-        const table = match[0];
-        // Extract rows from the table
-        const rows = table.split('\n').filter(row => row.trim().startsWith('|'));
-        // Skip the header row and separator row
-        for (let i = 2; i < rows.length; i++) {
-            const cells = rows[i].split('|').map(cell => cell.trim()).filter(Boolean);
-            if (cells.length >= 2) {
-                // Add parameter name and description to our text
-                const paramName = cells[0];
-                const paramDesc = cells.length >= 3 ? cells[cells.length - 1] : '';
-                parameterText += `${paramName}: ${paramDesc} `;
-            }
-        }
-    }
-    return parameterText;
-}
-/**
- * Extract API endpoint patterns from GitLab API documentation
- * Finds REST API endpoint patterns like GET /api/v4/projects/:id/issues
- *
- * @param {string} content - The markdown content
- * @returns {string} Extracted endpoint pattern or empty string if none found
- */
-function extractEndpointPattern(content) {
-    // Look for REST API endpoints (GET, POST, PUT, DELETE followed by a path)
-    const endpointMatch = content.match(/\b(GET|POST|PUT|DELETE|PATCH)\s+(\/[\w\/:_\-\.]+)/i);
-    if (endpointMatch) {
-        return endpointMatch[0];
-    }
-    // Look for plaintext blocks that look like API paths
-    const plainPathMatch = content.match(/^```\s*plaintext\s*\n(\/[\w\/:_\-\.]+)/m);
-    if (plainPathMatch) {
-        return plainPathMatch[1];
-    }
-    return '';
 }
 /**
  * Initializes the resource handling capability for the server.
@@ -246,73 +179,184 @@ async function listAllFilesInDir(dirPath) {
     return allFiles;
 }
 /**
- * Gets or creates a search index for a collection
+ * Loads resources from a collection by reading files from disk
+ *
+ * @param collection The resource collection to load
+ * @param options Additional options for loading
+ * @returns A Promise resolving to an array of resource contents
+ */
+async function loadResourcesFromCollection(collection, options = {}) {
+    const resources = [];
+    // Default options
+    const { batchSize = 10, // Number of files to process in each batch
+    concurrentFiles = 5, // Number of files to process concurrently
+    progressCallback // Optional callback for progress updates
+     } = options;
+    try {
+        console.log(`Loading resources from collection: ${collection.id} (${collection.name})`);
+        // Load the collection-specific configuration if available
+        let collectionConfig;
+        try {
+            // First try to load the collection-specific config
+            const configModule = await import(`./config/${collection.id}.js`);
+            collectionConfig = configModule.default;
+            console.log(`Loaded configuration for collection: ${collection.id}`);
+        }
+        catch (e) {
+            // If no collection-specific config exists, use the default
+            const defaultConfig = await import('./config/default.js');
+            collectionConfig = defaultConfig.default;
+            console.log(`Using default configuration for collection: ${collection.id}`);
+        }
+        // Configure the processor registry with the collection config
+        processorRegistry.setCollectionConfig(collectionConfig);
+        // Register collection-specific processors if provided
+        if (collection.processors) {
+            for (const [pattern, processor] of Object.entries(collection.processors)) {
+                processorRegistry.register(pattern, processor);
+            }
+        }
+        // Get absolute directory path
+        const absoluteDirPath = path.isAbsolute(collection.dirPath)
+            ? collection.dirPath
+            : path.join(process.cwd(), collection.dirPath);
+        // Get all files (these are already absolute paths)
+        const files = await listAllFilesInDir(collection.dirPath);
+        const markdownFiles = files.filter(file => file.endsWith('.md'));
+        // Filter out files that don't match our patterns
+        const filesToProcess = markdownFiles.filter(filePath => {
+            const relativePath = path.relative(absoluteDirPath, filePath);
+            // Check against content.includes patterns
+            const shouldInclude = (collection.content?.includes || ['**/*.md']).some(pattern => minimatch(relativePath, pattern));
+            // Check against content.excludes patterns
+            const shouldExclude = (collection.content?.excludes || []).some(pattern => minimatch(relativePath, pattern));
+            return shouldInclude && !shouldExclude;
+        });
+        console.log(`Found ${filesToProcess.length} markdown files to process`);
+        // Process files in batches to avoid memory issues
+        for (let i = 0; i < filesToProcess.length; i += batchSize) {
+            const batch = filesToProcess.slice(i, i + batchSize);
+            // Process files in the batch concurrently
+            const batchPromises = [];
+            for (let j = 0; j < batch.length; j += concurrentFiles) {
+                const concurrentBatch = batch.slice(j, j + concurrentFiles);
+                // Create an array of promises for concurrent processing
+                const promises = concurrentBatch.map(async (filePath) => {
+                    try {
+                        const relativePath = path.relative(absoluteDirPath, filePath);
+                        const resourceId = relativePath.replace(/\.md$/, '');
+                        // Read the file content
+                        const fileContent = await fs.promises.readFile(filePath, 'utf8');
+                        // Process the content asynchronously
+                        const processedContent = await processorRegistry.processContentAsync(filePath, fileContent);
+                        // Apply custom preprocessing if provided by the collection
+                        const finalContent = collection.preprocessContent
+                            ? collection.preprocessContent(processedContent)
+                            : processedContent;
+                        // Generate a URL for the resource if the collection provides a URL generator
+                        const url = collection.getURLForFile ? collection.getURLForFile(filePath) : undefined;
+                        // Add the resource to our collection
+                        return {
+                            id: resourceId,
+                            collectionId: collection.id,
+                            content: finalContent,
+                            url
+                        };
+                    }
+                    catch (err) {
+                        console.error(`Error processing file ${filePath}:`, err);
+                        return null;
+                    }
+                });
+                // Wait for all promises in this concurrent batch to resolve
+                const results = await Promise.all(promises);
+                // Add valid results to resources
+                results.filter(Boolean).forEach(resource => resources.push(resource));
+                // Call progress callback if provided
+                if (progressCallback) {
+                    progressCallback(Math.min(i + j + concurrentBatch.length, filesToProcess.length), filesToProcess.length);
+                }
+            }
+        }
+        console.log(`Loaded ${resources.length} resources from ${collection.id}`);
+    }
+    catch (err) {
+        console.error(`Error loading resources from ${collection.dirPath}:`, err);
+    }
+    return resources;
+}
+/**
+ * Gets or creates a search index for a collection with improved async processing
  *
  * @param collection The resource collection to create a search index for
+ * @param options Configuration options for indexing
  * @returns A Promise that resolves to the search index and resources
  */
-export async function getSearchIndexForCollection(collection) {
+export async function getSearchIndexForCollection(collection, options = {}) {
     const { id: collectionId } = collection;
-    if (!collectionContentsCache[collectionId]) {
-        collectionContentsCache[collectionId] = await loadResourcesFromCollection(collection);
+    // Default options
+    const { chunkSize = getValidChunkSize(options.chunkSize), recreateIndex = false, // Whether to recreate the index if it already exists
+    loadingProgressCallback, // Callback for loading progress
+    indexingProgressCallback // Callback for indexing progress
+     } = options;
+    // Check if we have a cached index and resources and if we're allowed to use them
+    const hasCachedResources = Boolean(collectionContentsCache[collectionId]);
+    const hasCachedIndex = Boolean(searchIndicesCache[collectionId]);
+    if (recreateIndex) {
+        // Clear the caches if we're recreating the index
+        delete collectionContentsCache[collectionId];
+        delete searchIndicesCache[collectionId];
+    }
+    // Load resources if not already cached
+    if (!hasCachedResources || recreateIndex) {
+        collectionContentsCache[collectionId] = await loadResourcesFromCollection(collection, {
+            batchSize: chunkSize,
+            concurrentFiles: 5,
+            progressCallback: loadingProgressCallback
+        });
     }
     let resources = collectionContentsCache[collectionId];
-    if (!searchIndicesCache[collectionId]) {
-        // Create field extractors
-        const extractTitle = (content, resourceId) => {
-            // Try to find an H1 heading (# Title)
-            const h1Match = content.match(/^#\s+(.+?)(?:\r?\n|$)/m);
-            if (h1Match)
-                return h1Match[1].trim();
-            // Try to find an H2 heading (## Title)
-            const h2Match = content.match(/^##\s+(.+?)(?:\r?\n|$)/m);
-            if (h2Match)
-                return h2Match[1].trim();
-            // Default to a humanized version of the resource ID if no title found
-            const basename = resourceId.split('/').pop() || '';
-            return basename.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-        };
-        const extractParameterData = (content) => {
-            // Match markdown tables that have a header row containing "Parameter"
-            const tableRegex = /\|[^|]*Parameter[^|]*\|[^|]*\|[\s\S]*?(?=\n\n|\n#|\n$)/g;
-            const tables = content.match(tableRegex);
-            if (!tables)
-                return '';
-            // Process each table to extract parameter names and descriptions
-            return tables.map((table) => {
-                const rows = table.split('\n');
-                // Skip header row and separator row (first two rows of markdown table)
-                return rows.slice(2).map((row) => {
-                    // Extract content from cells (split by | and remove leading/trailing |)
-                    const cells = row.split('|').slice(1, -1).map((cell) => cell.trim());
-                    if (cells.length >= 2) {
-                        return `${cells[0]} ${cells[1]}`;
-                    }
-                    return '';
-                }).join(' ');
-            }).join(' ');
-        };
-        const extractEndpointPattern = (content) => {
-            // Match common REST API endpoint patterns (HTTP method + path)
-            const endpointMatch = content.match(/\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/[a-zA-Z0-9\/_:.-]+)\b/);
-            return endpointMatch ? `${endpointMatch[1]} ${endpointMatch[2]}` : null;
-        };
-        // Pre-process resources to extract fields
-        resources = resources.map(resource => {
-            const title = extractTitle(resource.content, resource.id);
-            const parameterData = extractParameterData(resource.content);
-            const endpointPattern = extractEndpointPattern(resource.content);
-            const hasParameters = parameterData.length > 0;
-            return {
-                ...resource,
-                title,
-                parameterData,
-                endpointPattern,
-                hasParameters
-            };
-        });
-        // Update cache with enriched resources
+    // Create a new search index if needed
+    if (!hasCachedIndex || recreateIndex) {
+        // Get the appropriate processor instance for extraction tasks
+        // Import it here to avoid circular dependencies
+        const { processorRegistry } = await import('./processors/index.js');
+        // Pre-process resources to extract fields in small batches
+        // This is CPU intensive, so we do it in chunks
+        const enhancedResources = [];
+        for (let i = 0; i < resources.length; i += chunkSize) {
+            // Get a chunk of resources to process
+            const chunk = resources.slice(i, i + chunkSize);
+            // Process each resource in the chunk
+            const processed = chunk.map(resource => {
+                // Get the appropriate processor for this resource
+                const processor = processorRegistry.getProcessorForFile(`${collectionId}/${resource.id}.md`);
+                // Use the processor to extract metadata
+                const title = processor.extractTitle(resource.content, resource.id);
+                const parameterData = processor.extractParameterData(resource.content);
+                const endpointPattern = processor.extractEndpointPattern(resource.content);
+                const hasParameters = parameterData.length > 0;
+                return {
+                    ...resource,
+                    title,
+                    parameterData,
+                    endpointPattern,
+                    hasParameters
+                };
+            });
+            // Add the processed resources to our result
+            enhancedResources.push(...processed);
+            // Call progress callback if provided
+            if (indexingProgressCallback) {
+                indexingProgressCallback(Math.min(i + chunk.length, resources.length), resources.length);
+            }
+            // Allow the event loop to run other tasks
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        // Update the resources with the enhanced versions
+        resources = enhancedResources;
         collectionContentsCache[collectionId] = resources;
+        // Create a new search index with our configuration
         const searchIndex = new MiniSearch({
             idField: 'id',
             fields: ['title', 'parameterData', 'content'],
@@ -350,96 +394,49 @@ export async function getSearchIndexForCollection(collection) {
                 prefix: true
             }
         });
-        // Add all resources to the index
-        searchIndex.addAll(resources);
-        searchIndicesCache[collectionId] = searchIndex;
+        // Add resources to the index asynchronously in chunks
+        // This allows the event loop to handle other tasks
+        let indexingComplete = false;
+        let indexedCount = 0;
+        const totalCount = resources.length;
+        // Store the promise that resolves when indexing is complete
+        const indexingPromise = (async () => {
+            console.log(`Adding ${resources.length} resources to search index in chunks of ${chunkSize}`);
+            // Process resources in chunks
+            for (let i = 0; i < resources.length; i += chunkSize) {
+                const chunk = resources.slice(i, Math.min(i + chunkSize, resources.length));
+                // Add this chunk to the index using MiniSearch's addAllAsync for better performance
+                await searchIndex.addAllAsync(chunk);
+                // Update progress
+                indexedCount = Math.min(i + chunkSize, resources.length);
+                if (indexingProgressCallback) {
+                    indexingProgressCallback(indexedCount, totalCount);
+                }
+                // Allow other tasks to run between chunks
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+            console.log(`Finished adding resources to search index`);
+            indexingComplete = true;
+        })();
+        // Store both the index and the indexing promise in the cache
+        searchIndicesCache[collectionId] = {
+            index: searchIndex,
+            indexingPromise,
+            isIndexingComplete: () => indexingComplete,
+            getIndexingProgress: () => Math.round((indexedCount / totalCount) * 100)
+        };
+        return {
+            searchIndex,
+            resources,
+            isIndexingComplete: indexingComplete
+        };
     }
+    // Return the cached index and resources
     return {
-        searchIndex: searchIndicesCache[collectionId],
-        resources
+        searchIndex: searchIndicesCache[collectionId].index,
+        resources,
+        isIndexingComplete: searchIndicesCache[collectionId].isIndexingComplete()
     };
-}
-/**
- * Loads resources from a collection, specifically targeting markdown files.
- *
- * @param collection The resource collection to load
- * @returns A Promise that resolves to an array of resource content objects
- */
-async function loadResourcesFromCollection(collection) {
-    const resourcesPath = collection.dirPath;
-    const resourceContents = [];
-    try {
-        // Get absolute directory path
-        const absoluteDirPath = path.isAbsolute(resourcesPath)
-            ? resourcesPath
-            : path.join(process.cwd(), resourcesPath);
-        // Get all files (these are already absolute paths)
-        const files = await listAllFilesInDir(resourcesPath);
-        const markdownFiles = files.filter(file => file.endsWith('.md'));
-        for (const filePath of markdownFiles) {
-            // Since filePath is already absolute, we need to get the relative path from the absolute dir
-            const relativePath = path.relative(absoluteDirPath, filePath);
-            const resourceId = `${collection.id}/${relativePath.replace(/\.md$/, '')}`;
-            try {
-                const fileContent = await fs.promises.readFile(filePath, 'utf8');
-                resourceContents.push({
-                    id: resourceId,
-                    collectionId: collection.id,
-                    content: fileContent,
-                    url: collection.getURLForFile ? collection.getURLForFile(relativePath) : undefined
-                });
-            }
-            catch (err) {
-                console.error(`Error reading file ${filePath}:`, err);
-            }
-        }
-    }
-    catch (err) {
-        console.error(`Error loading resources from ${resourcesPath}:`, err);
-    }
-    return resourceContents;
-}
-/**
- * Extract a snippet of content around search matches
- * Creates a context-aware excerpt highlighting search terms
- *
- * @param {string} content - The full content to extract a snippet from
- * @param {string} query - The search query to find in the content
- * @returns {string} A snippet of content with context around matches
- */
-function extractContentSnippet(content, query) {
-    // Normalize content and query for matching
-    const normalizedContent = content.toLowerCase();
-    const queryTerms = query.toLowerCase().split(/\s+/).filter(Boolean)
-        .filter(term => !SEARCH_STOPWORDS.has(term));
-    // Find positions of all query terms in the content
-    const matchPositions = [];
-    queryTerms.forEach(term => {
-        let pos = normalizedContent.indexOf(term);
-        while (pos !== -1) {
-            matchPositions.push(pos);
-            pos = normalizedContent.indexOf(term, pos + 1);
-        }
-    });
-    if (matchPositions.length === 0) {
-        // No exact matches, return the start of the content
-        return content.substring(0, 200) + (content.length > 200 ? '...' : '');
-    }
-    // Sort positions and choose the most representative match
-    matchPositions.sort((a, b) => a - b);
-    const matchPos = matchPositions[Math.floor(matchPositions.length / 2)]; // Middle match
-    // Define snippet window
-    const snippetLength = 200;
-    const windowStart = Math.max(0, matchPos - snippetLength / 2);
-    const windowEnd = Math.min(content.length, matchPos + snippetLength / 2);
-    // Extract snippet
-    let snippet = content.substring(windowStart, windowEnd);
-    // Add ellipsis if needed
-    if (windowStart > 0)
-        snippet = '...' + snippet;
-    if (windowEnd < content.length)
-        snippet = snippet + '...';
-    return snippet;
 }
 /**
  * Search for resources in a collection
@@ -507,53 +504,123 @@ export function getSnippetFromContent(content, queryTerms) {
     if (!content || !queryTerms || queryTerms.length === 0) {
         return content.substring(0, 200) + (content.length > 200 ? '...' : '');
     }
-    const normalizedContent = content.toLowerCase();
-    const normalizedTerms = queryTerms.map(term => term.toLowerCase());
-    const matchPositions = [];
-    normalizedTerms.forEach(term => {
-        let pos = normalizedContent.indexOf(term);
-        while (pos !== -1) {
-            matchPositions.push(pos);
-            pos = normalizedContent.indexOf(term, pos + 1);
-        }
-    });
-    if (matchPositions.length === 0) {
-        // No exact matches, return the start of the content
-        return content.substring(0, 200) + (content.length > 200 ? '...' : '');
+    // Join query terms for processor-based extraction
+    const query = queryTerms.join(' ');
+    // Use the processor registry to handle the extraction
+    try {
+        // This is a synchronous method, so we can't import dynamically here
+        // Instead, we use the exported processorRegistry which should be available
+        const { processorRegistry } = require('./processors/index.js');
+        // Use the default processor for snippet extraction
+        // This will use the most appropriate processor's implementation
+        const processor = processorRegistry.getProcessorForFile('snippet.md');
+        return processor.extractContentSnippet(content, query);
     }
-    // Sort positions and choose the most representative match
-    matchPositions.sort((a, b) => a - b);
-    // Better snippet extraction: Get a window around the first match
-    // but try to include additional matches if they're close
-    let primaryMatchPos = matchPositions[0];
-    // If we have multiple matches, try to find a good cluster of matches
-    if (matchPositions.length > 2) {
-        // Calculate distances between consecutive matches
-        const diffs = [];
-        for (let i = 1; i < matchPositions.length; i++) {
-            diffs.push({
-                pos: matchPositions[i - 1],
-                diff: matchPositions[i] - matchPositions[i - 1]
-            });
+    catch (err) {
+        console.error('Error using processor for snippet extraction:', err);
+        // Fallback to the original implementation if processor is unavailable
+        const normalizedContent = content.toLowerCase();
+        const normalizedTerms = queryTerms.map(term => term.toLowerCase());
+        const matchPositions = [];
+        normalizedTerms.forEach(term => {
+            let pos = normalizedContent.indexOf(term);
+            while (pos !== -1) {
+                matchPositions.push(pos);
+                pos = normalizedContent.indexOf(term, pos + 1);
+            }
+        });
+        if (matchPositions.length === 0) {
+            // No exact matches, return the start of the content
+            return content.substring(0, 200) + (content.length > 200 ? '...' : '');
         }
-        // Find the position with most matches in proximity (within 100 chars)
-        const matchClusters = diffs.filter(d => d.diff < 100);
-        if (matchClusters.length > 0) {
-            // Use the start of the densest cluster as our primary position
-            primaryMatchPos = matchClusters[0].pos;
+        // Sort positions and choose the most representative match
+        matchPositions.sort((a, b) => a - b);
+        // Better snippet extraction: Get a window around the first match
+        // but try to include additional matches if they're close
+        let primaryMatchPos = matchPositions[0];
+        // If we have multiple matches, try to find a good cluster of matches
+        if (matchPositions.length > 2) {
+            // Calculate distances between consecutive matches
+            const diffs = [];
+            for (let i = 1; i < matchPositions.length; i++) {
+                diffs.push({
+                    pos: matchPositions[i - 1],
+                    diff: matchPositions[i] - matchPositions[i - 1]
+                });
+            }
+            // Find the position with most matches in proximity (within 100 chars)
+            const matchClusters = diffs.filter(d => d.diff < 100);
+            if (matchClusters.length > 0) {
+                // Use the start of the densest cluster as our primary position
+                primaryMatchPos = matchClusters[0].pos;
+            }
         }
+        // Define snippet window - make it larger to capture more context
+        const snippetLength = 300;
+        const windowStart = Math.max(0, primaryMatchPos - snippetLength / 3);
+        const windowEnd = Math.min(content.length, primaryMatchPos + snippetLength * 2 / 3);
+        // Extract snippet
+        let snippet = content.substring(windowStart, windowEnd);
+        // Add ellipsis if needed
+        if (windowStart > 0)
+            snippet = '...' + snippet;
+        if (windowEnd < content.length)
+            snippet = snippet + '...';
+        return snippet;
     }
-    // Define snippet window - make it larger to capture more context
-    const snippetLength = 300;
-    const windowStart = Math.max(0, primaryMatchPos - snippetLength / 3);
-    const windowEnd = Math.min(content.length, primaryMatchPos + snippetLength * 2 / 3);
-    // Extract snippet
-    let snippet = content.substring(windowStart, windowEnd);
-    // Add ellipsis if needed
-    if (windowStart > 0)
-        snippet = '...' + snippet;
-    if (windowEnd < content.length)
-        snippet = snippet + '...';
-    return snippet;
 }
-//# sourceMappingURL=index.js.map
+/**
+ * Loads resources from a collection configuration.
+ * Each collection defines its content root, inclusion/exclusion patterns,
+ * and other settings.
+ */
+export async function loadCollections() {
+    try {
+        console.log('Loading collection configuration');
+        // Import default configuration to use as a base
+        const defaultConfig = await import('./config/default.js').then(m => m.default);
+        // Get available collection configurations
+        const collectionsDir = path.join(__dirname, 'config');
+        const files = await fs.promises.readdir(collectionsDir);
+        // Get list of config files and import them
+        const configFiles = files.filter(file => (file.endsWith('.js')) &&
+            file !== 'default.js');
+        // Load each configuration
+        const collectionConfigs = await Promise.all(configFiles.map(async (file) => {
+            try {
+                // Get the full path to the config file
+                const configFile = path.join(collectionsDir, file);
+                const module = await import(`file://${configFile}`);
+                const config = module.default;
+                // Validate the configuration
+                if (!config || !config.metadata || !config.metadata.id) {
+                    console.warn(`Skipping invalid collection config: ${file}`);
+                    return null;
+                }
+                // Create a proper ResourceCollection object
+                const collectionDirPath = path.join(__dirname, '../', config.metadata.id);
+                const contentDirPath = config.getContentPath(collectionDirPath);
+                return {
+                    id: config.metadata.id,
+                    name: config.metadata.name,
+                    description: config.metadata.description,
+                    dirPath: collectionDirPath,
+                    contentDirPath: contentDirPath,
+                    config,
+                    resources: [],
+                    stopwords: config.getAllStopwords()
+                };
+            }
+            catch (err) {
+                console.error(`Error loading collection config: ${file}`, err);
+                return null;
+            }
+        }));
+        // Filter out any null values from failed imports
+        return collectionConfigs.filter(Boolean);
+    }
+    catch (err) {
+        console.error('Failed to load collections:', err);
+        return [];
+    }
+}
