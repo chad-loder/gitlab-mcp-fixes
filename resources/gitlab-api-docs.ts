@@ -456,12 +456,21 @@ async function runDiagnostics(): Promise<void> {
     // Store results for export
     allQueryResults[query] = results.slice(0, 10).map(result => {
       const resource = resources.find(r => r.id === result.id);
+
+      // Create a clean representation of match data that can be safely serialized to JSON
+      const matchData: Record<string, string[]> = {};
+      if (result.match) {
+        Object.entries(result.match).forEach(([term, fields]) => {
+          matchData[term] = Array.isArray(fields) ? fields : Object.keys(fields);
+        });
+      }
+
       return {
         score: result.score,
         id: result.id,
         title: resource?.title || '',
         endpointPattern: resource?.endpointPattern || null,
-        matches: result.match
+        matches: matchData
       };
     });
 
