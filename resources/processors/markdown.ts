@@ -142,6 +142,7 @@ export class MarkdownProcessor extends BaseIndexingProcessor {
 
       // Handle different token types
       switch (token.type) {
+        // Block-level tokens
         case 'heading':
           const headingToken = token as Tokens.Heading;
           if (this.options.debug) {
@@ -239,13 +240,178 @@ export class MarkdownProcessor extends BaseIndexingProcessor {
           result += '\n';
           break;
 
+        case 'def':
+          // Definition - usually does not contain user-visible text
+          // It's a reference for links and images
+          const defToken = token as Tokens.Def;
+          if (this.options.debug) {
+            console.log(`  Definition: ${defToken.title || defToken.href}`);
+          }
+          // We typically don't add definition tokens to content
+          break;
+
+        case 'lheading':
+          // Setext-style heading (underlined with = or -)
+          const lheadingToken = token as Tokens.Heading;
+          if (this.options.debug) {
+            console.log(`  Line Heading (Level ${lheadingToken.depth}): ${lheadingToken.text}`);
+          }
+          result += `${lheadingToken.text}\n\n`;
+          break;
+
+        case 'text':
+          // Plain text block - these are rare at the block level
+          const textBlockToken = token as Tokens.Text;
+          if (this.options.debug) {
+            console.log(`  Text Block: ${textBlockToken.text.substring(0, 40)}${textBlockToken.text.length > 40 ? '...' : ''}`);
+          }
+          result += `${textBlockToken.text}\n\n`;
+          break;
+
+        // Inline tokens - these usually appear nested inside block tokens
+        case 'escape':
+          // Escaped character
+          if (this.options.debug) {
+            console.log(`  Escaped character`);
+          }
+          // Handled by parent token's text property
+          break;
+
+        case 'link':
+          // Link
+          const linkToken = token as Tokens.Link;
+          if (this.options.debug) {
+            console.log(`  Link: ${linkToken.text} -> ${linkToken.href}`);
+          }
+          // Just include the link text, not the URL
+          result += `${linkToken.text} `;
+          break;
+
+        case 'image':
+          // Image
+          const imageToken = token as Tokens.Image;
+          if (this.options.debug) {
+            console.log(`  Image: ${imageToken.text}`);
+          }
+          // Include alt text for images
+          result += `${imageToken.text} `;
+          break;
+
+        case 'strong':
+          // Strong emphasis
+          const strongToken = token as Tokens.Strong;
+          if (this.options.debug) {
+            console.log(`  Strong: ${strongToken.text}`);
+          }
+          result += `${strongToken.text} `;
+          break;
+
+        case 'em':
+          // Emphasis
+          const emToken = token as Tokens.Em;
+          if (this.options.debug) {
+            console.log(`  Emphasis: ${emToken.text}`);
+          }
+          result += `${emToken.text} `;
+          break;
+
+        case 'codespan':
+          // Inline code
+          const codespanToken = token as Tokens.Codespan;
+          if (this.options.debug) {
+            console.log(`  Codespan: ${codespanToken.text}`);
+          }
+          result += `${codespanToken.text} `;
+          break;
+
+        case 'br':
+          // Line break
+          if (this.options.debug) {
+            console.log(`  Line break`);
+          }
+          result += '\n';
+          break;
+
+        case 'del':
+          // Deleted text
+          const delToken = token as Tokens.Del;
+          if (this.options.debug) {
+            console.log(`  Deleted text: ${delToken.text}`);
+          }
+          result += `${delToken.text} `;
+          break;
+
+        case 'tag':
+          // HTML tag
+          const tagToken = token as Tokens.Tag;
+          if (this.options.debug) {
+            console.log(`  HTML Tag: ${tagToken.text}`);
+          }
+          // Skip HTML tags by default, same as HTML blocks
+          if (!this.options.skipHtml) {
+            result += `${tagToken.text} `;
+          }
+          break;
+
+        case 'reflink':
+          // Reference-style link [text][id]
+          const reflinkToken = token as Tokens.Link;
+          if (this.options.debug) {
+            console.log(`  Reference Link: ${reflinkToken.text}`);
+          }
+          // Include only the link text, not the URL
+          result += `${reflinkToken.text} `;
+          break;
+
+        case 'emStrong':
+          // Combined emphasis and strong
+          if (this.options.debug) {
+            console.log(`  EmStrong (combined emphasis)`);
+          }
+          // This is usually processed into em/strong tokens
+          // but we'll handle if encountered
+          if ('text' in token) {
+            result += (token as any).text + ' ';
+          }
+          break;
+
+        case 'autolink':
+          // Automatically linked URL <https://example.com>
+          const autolinkToken = token as Tokens.Link;
+          if (this.options.debug) {
+            console.log(`  Autolink: ${autolinkToken.text} -> ${autolinkToken.href}`);
+          }
+          // Include the text of the autolink
+          result += `${autolinkToken.text} `;
+          break;
+
+        case 'url':
+          // Raw URL that gets automatically linked
+          const urlToken = token as Tokens.Link;
+          if (this.options.debug) {
+            console.log(`  URL: ${urlToken.href}`);
+          }
+          // Include the URL text
+          result += `${urlToken.text || urlToken.href} `;
+          break;
+
+        case 'inlineText':
+          // Inline text within a block
+          if (this.options.debug) {
+            console.log(`  Inline Text`);
+          }
+          if ('text' in token) {
+            result += (token as any).text + ' ';
+          }
+          break;
+
         default:
           if (this.options.debug) {
             console.log(`  Unhandled token type: ${token.type}`, token);
           }
           // For unknown tokens, include their raw text if available
           if ('text' in token) {
-            result += (token as any).text + '\n\n';
+            result += (token as any).text + ' ';
           }
       }
     }
