@@ -129,6 +129,58 @@ export class MarkdownProcessor extends BaseIndexingProcessor {
   }
 
   /**
+   * Process markdown content asynchronously by tokenizing and walking through tokens
+   * This leverages Marked's async capabilities
+   */
+  async processAsync(content: string): Promise<string> {
+    if (this.options.debug) {
+      console.log(`\n\n==== Processing markdown file asynchronously ====`);
+    }
+
+    // Create a local Marked instance for this specific task to ensure thread safety
+    // This prevents race conditions when multiple files are processed concurrently
+    const safeMarked = new Marked();
+
+    // Configure the local instance with the same options as the shared instance
+    if (this.options.markdown?.flavor === 'glfm') {
+      safeMarked.setOptions({
+        gfm: true,
+        breaks: this.options.markdown?.breaks ?? false,
+        pedantic: this.options.markdown?.pedantic ?? false
+      });
+    } else {
+      safeMarked.setOptions({
+        gfm: true,
+        breaks: this.options.markdown?.breaks ?? false,
+        pedantic: this.options.markdown?.pedantic ?? false
+      });
+    }
+
+    // Apply any additional marked options
+    if (this.options.markdown?.markedOptions) {
+      safeMarked.setOptions(this.options.markdown.markedOptions);
+    }
+
+    // Parse markdown asynchronously with the thread-safe instance
+    const tokens = safeMarked.lexer(content);
+
+    // We'll make the token processing async
+    // This allows the event loop to handle other tasks while processing
+    return new Promise((resolve) => {
+      // Use setTimeout to make this non-blocking
+      setTimeout(() => {
+        const result = this.processTokens(tokens);
+
+        if (this.options.debug) {
+          console.log(`==== Finished processing markdown asynchronously ====\n\n`);
+        }
+
+        resolve(result);
+      }, 0);
+    });
+  }
+
+  /**
    * Process tokens recursively and log information about them
    */
   private processTokens(tokens: Token[]): string {
@@ -438,5 +490,97 @@ export class MarkdownProcessor extends BaseIndexingProcessor {
   canProcess(filePath: string): boolean {
     const ext = path.extname(filePath).toLowerCase();
     return ext === '.md' || ext === '.markdown' || ext === '.mdx';
+  }
+
+  /**
+   * Extract the title from markdown content
+   * Looks for H1 and H2 headers in order of preference
+   *
+   * @param content The markdown content
+   * @param resourceId Optional resource ID to use as fallback
+   * @returns The extracted title
+   */
+  public extractTitle(content: string, resourceId: string = ''): string {
+    // Try to find an H1 heading (# Title)
+    const h1Match = content.match(/^#\s+(.+?)(?:\r?\n|$)/m);
+    if (h1Match) return h1Match[1].trim();
+
+    // Try to find an H2 heading (## Title)
+    const h2Match = content.match(/^##\s+(.+?)(?:\r?\n|$)/m);
+    if (h2Match) return h2Match[1].trim();
+
+    // Default to a humanized version of the resource ID if no title found
+    if (resourceId) {
+      const basename = resourceId.split('/').pop() || '';
+      return basename.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+    }
+
+    return '';
+  }
+
+  /**
+   * Extract parameter data from markdown tables
+   * Specifically looks for tables with a "Parameter" column
+   *
+   * @param content The markdown content
+   * @returns String containing parameter names and descriptions
+   */
+  public extractParameterData(content: string): string {
+    // Match markdown tables that have a header row containing "Parameter"
+    const tableRegex = /\|[^|]*Parameter[^|]*\|[^|]*\|[\s\S]*?(?=\n\n|\n#|\n$)/g;
+    const tables = content.match(tableRegex);
+
+    if (!tables) return '';
+
+    // Process each table to extract parameter names and descriptions
+    return tables.map((table: string) => {
+      const rows = table.split('\n');
+      // Skip header row and separator row (first two rows of markdown table)
+      return rows.slice(2).map((row: string) => {
+        // Extract content from cells (split by | and remove leading/trailing |)
+        const cells = row.split('|').slice(1, -1).map((cell: string) => cell.trim());
+        if (cells.length >= 2) {
+          return `${cells[0]} ${cells[1]}`;
+        }
+        return '';
+      }).join(' ');
+    }).join(' ');
+  }
+
+  /**
+   * Extract API endpoint pattern from markdown content
+   * Looks for common REST API patterns like GET /path
+   *
+   * @param content The markdown content
+   * @returns Extracted endpoint pattern or null if none found
+   */
+  public extractEndpointPattern(content: string): string | null {
+    // Match common REST API endpoint patterns (HTTP method + path)
+    const endpointMatch = content.match(/\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/[a-zA-Z0-9\/_:.-]+)\b/);
+    return endpointMatch ? `${endpointMatch[1]} ${endpointMatch[2]}` : null;
+  }
+
+  /**
+   * Extract a relevant snippet of content around a search query
+   *
+   * @param content The markdown content
+   * @param query The search query
+   * @returns A snippet of content around the query
+   */
+  public extractContentSnippet(content: string, query: string): string {
+    // First clean the query for regex safety
+    const safeQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // Try to find the query in the content
+    const regex = new RegExp(`(.{0,100})(${safeQuery})(.{0,100})`, 'i');
+    const match = content.match(regex);
+
+    if (match) {
+      // Return the context around the match
+      return `...${match[1]}${match[2]}${match[3]}...`;
+    }
+
+    // If no match, return the beginning of the content
+    return content.substring(0, 200) + '...';
   }
 }

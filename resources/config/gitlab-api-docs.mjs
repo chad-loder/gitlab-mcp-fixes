@@ -38,6 +38,12 @@ export default defaultConfig.extend({
 
   // Processor configuration
   processors: {
+    // Use GitLab-specific markdown processor
+    useGitLabProcessor: true,
+
+    // Extract metadata in a single pass
+    extractMetadata: true,
+
     // Markdown processor configuration
     markdown: {
       // Use GitLab Flavored Markdown

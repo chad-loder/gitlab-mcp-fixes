@@ -2,6 +2,7 @@ import { BaseIndexingProcessor, IndexingProcessorOptions } from './base.js';
 import { PlaintextProcessor } from './plaintext.js';
 import { MarkdownProcessor, MarkdownProcessorOptions } from './markdown.js';
 import { minimatch } from 'minimatch';
+import { GitLabMarkdownProcessor, GitLabMarkdownProcessorOptions } from './gitlab-markdown.js';
 
 /**
  * Registry entry mapping glob patterns to processors
@@ -69,8 +70,39 @@ export class ProcessorRegistry {
     // Get processor options from the config
     const processorConfig = this.collectionConfig.processors || {};
 
-    // Configure markdown processor if options exist
-    if (processorConfig.markdown) {
+    // Check if this is specifically a GitLab collection
+    if (processorConfig.useGitLabProcessor === true) {
+      // Configure GitLab-specific markdown processor
+      const gitlabOptions: GitLabMarkdownProcessorOptions = {
+        debug: processorConfig.markdown?.debug || false,
+        skipCodeBlocks: processorConfig.markdown?.skipCodeBlocks !== undefined
+          ? processorConfig.markdown.skipCodeBlocks
+          : true,
+        skipHtml: processorConfig.markdown?.skipHtml !== undefined
+          ? processorConfig.markdown.skipHtml
+          : true,
+        extractMetadata: processorConfig.extractMetadata !== undefined
+          ? processorConfig.extractMetadata
+          : true,
+        markdown: {
+          flavor: 'glfm', // Always use GitLab Flavored Markdown for GitLab collections
+          breaks: processorConfig.markdown?.options?.breaks,
+          pedantic: processorConfig.markdown?.options?.pedantic,
+          allowHtml: processorConfig.markdown?.options?.allowHtml,
+          markedOptions: processorConfig.markdown?.options?.markedOptions
+        }
+      };
+
+      // Create GitLab processor with the options
+      const gitlabProcessor = new GitLabMarkdownProcessor(gitlabOptions);
+
+      // Register for markdown file patterns
+      this.register('**/*.md', gitlabProcessor);
+      this.register('**/*.markdown', gitlabProcessor);
+      this.register('**/*.mdx', gitlabProcessor);
+    }
+    // Configure standard markdown processor if options exist
+    else if (processorConfig.markdown) {
       const markdownOptions: MarkdownProcessorOptions = {
         debug: processorConfig.markdown.debug || false,
         skipCodeBlocks: processorConfig.markdown.skipCodeBlocks !== undefined
@@ -134,12 +166,32 @@ export class ProcessorRegistry {
     const processor = this.getProcessorForFile(filePath);
     return processor.process(content);
   }
+
+  /**
+   * Process content asynchronously using the appropriate processor for the file
+   * @param filePath Path to the file
+   * @param content Raw content to process
+   * @returns Promise of processed content ready for indexing
+   */
+  async processContentAsync(filePath: string, content: string): Promise<string> {
+    const processor = this.getProcessorForFile(filePath);
+    return processor.processAsync(content);
+  }
 }
 
-// Export a singleton instance
+// Create and export a singleton processor registry
 export const processorRegistry = new ProcessorRegistry();
+
+// Re-export all processor classes for external use
+export {
+  BaseIndexingProcessor,
+  MarkdownProcessor,
+  GitLabMarkdownProcessor,
+  PlaintextProcessor
+};
 
 // Re-export base types
 export * from './base.js';
 export * from './plaintext.js';
 export * from './markdown.js';
+export * from './gitlab-markdown.js';
