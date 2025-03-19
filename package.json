@@ -22,7 +22,7 @@
     "prepare": "npm run build",
     "watch": "tsc --watch",
     "deploy": "npm run build && npm publish",
-    "diagnostic": "npx ts-node resources/benchmark-indexing.ts"
+    "diagnostic": "node build/resources/benchmark-indexing.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.0.1",
