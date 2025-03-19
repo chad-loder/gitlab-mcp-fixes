@@ -17,8 +17,8 @@
   },
   "scripts": {
     "clean": "rm -rf build",
-    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
-    "postbuild": "mkdir -p build/resources/gitlab-api-docs && cp -R resources/gitlab-api-docs/* build/resources/gitlab-api-docs/",
+    "build": "tsc && tsc -p resources/tsconfig.json && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "postbuild": "mkdir -p build/resources/config && mkdir -p build/resources/tools && mkdir -p build/resources/gitlab-api-docs/content && cp -R resources/config/*.mjs build/resources/config/ && cp -R resources/gitlab-api-docs/collection.mjs build/resources/gitlab-api-docs/ && cp -R resources/gitlab-api-docs/content/* build/resources/gitlab-api-docs/content/",
     "prepare": "npm run build",
     "watch": "tsc --watch",
     "deploy": "npm run build && npm publish"
@@ -28,6 +28,7 @@
     "@types/node-fetch": "^2.6.12",
     "minisearch": "^7.1.2",
     "node-fetch": "^3.3.2",
+    "porterstem": "^2.0.0",
     "zod-to-json-schema": "^3.23.5"
   },
   "devDependencies": {
