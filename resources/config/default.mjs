@@ -37,6 +37,33 @@ export default {
     ]
   },
 
+  // Processor configuration
+  processors: {
+    // Markdown processor configuration
+    markdown: {
+      // Flavor of markdown to parse
+      // - 'gfm': GitHub Flavored Markdown (default)
+      // - 'glfm': GitLab Flavored Markdown
+      flavor: 'gfm',
+
+      // Whether to skip code blocks in the content for indexing
+      skipCodeBlocks: true,
+
+      // Whether to skip HTML in the content for indexing
+      skipHtml: true,
+
+      // Whether to display token information during processing
+      debug: false,
+
+      // Additional marked.js options
+      options: {
+        breaks: false,       // Don't treat line breaks as <br>
+        pedantic: false,     // Don't use pedantic GFM
+        allowHtml: true      // Allow HTML in markdown
+      }
+    }
+  },
+
   // Search behavior configuration
   search: {
     // Field boosting configuration

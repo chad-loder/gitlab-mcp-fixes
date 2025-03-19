@@ -1,10 +1,12 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { promisify } from 'util';
 import MiniSearch from 'minisearch';
+import * as fs from 'fs';
+import { promisify } from 'util';
 import * as porterStemmer from 'porterstem';
+import { processorRegistry, BaseIndexingProcessor } from './processors/index.js';
+import { minimatch } from 'minimatch';
 
 // Create dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -20,15 +22,30 @@ export interface ResourceCollection {
   dirPath: string;
   getURLForFile?: (filePath: string) => string;
   stopwords?: Set<string>; // Optional set of collection-specific stopwords
+  preprocessContent?: (content: string) => string;
+  fieldProcessors?: Record<string, (content: string) => string>;
+
+  // Add processor configuration options
+  processors?: {
+    [pattern: string]: BaseIndexingProcessor;
+  };
+
+  // Content filtering options
+  content?: {
+    includes?: string[];
+    excludes?: string[];
+    contentRoot?: string;
+  };
 }
 
 /**
- * Interface for resource content objects
+ * Represents the content of a resource document
  */
 export interface ResourceContent {
   id: string;
   collectionId: string;
-  content: string;
+  content: string;   // Processed content for indexing
+  rawContent?: string; // Original unprocessed content
   url?: string;
   title?: string;
   parameterData?: string;
@@ -524,48 +541,96 @@ export async function getSearchIndexForCollection(collection: ResourceCollection
 }
 
 /**
- * Loads resources from a collection, specifically targeting markdown files.
- *
- * @param collection The resource collection to load
- * @returns A Promise that resolves to an array of resource content objects
+ * Loads resources from a collection by reading files from disk
  */
 async function loadResourcesFromCollection(collection: ResourceCollection): Promise<ResourceContent[]> {
-  const resourcesPath = collection.dirPath;
-  const resourceContents: ResourceContent[] = [];
+  const resources: ResourceContent[] = [];
 
   try {
+    console.log(`Loading resources from collection: ${collection.id} (${collection.name})`);
+
+    // Load the collection-specific configuration if available
+    let collectionConfig;
+
+    try {
+      // First try to load the collection-specific config
+      const configModule = await import(`./config/${collection.id}.mjs`);
+      collectionConfig = configModule.default;
+      console.log(`Loaded configuration for collection: ${collection.id}`);
+    } catch (e) {
+      // If no collection-specific config exists, use the default
+      const defaultConfig = await import('./config/default.mjs');
+      collectionConfig = defaultConfig.default;
+      console.log(`Using default configuration for collection: ${collection.id}`);
+    }
+
+    // Configure the processor registry with the collection config
+    processorRegistry.setCollectionConfig(collectionConfig);
+
+    // Register collection-specific processors if provided
+    if (collection.processors) {
+      for (const [pattern, processor] of Object.entries(collection.processors)) {
+        processorRegistry.register(pattern, processor);
+      }
+    }
+
     // Get absolute directory path
-    const absoluteDirPath = path.isAbsolute(resourcesPath)
-      ? resourcesPath
-      : path.join(process.cwd(), resourcesPath);
+    const absoluteDirPath = path.isAbsolute(collection.dirPath)
+      ? collection.dirPath
+      : path.join(process.cwd(), collection.dirPath);
 
     // Get all files (these are already absolute paths)
-    const files = await listAllFilesInDir(resourcesPath);
+    const files = await listAllFilesInDir(collection.dirPath);
     const markdownFiles = files.filter(file => file.endsWith('.md'));
 
+    // Process each markdown file and extract content
     for (const filePath of markdownFiles) {
-      // Since filePath is already absolute, we need to get the relative path from the absolute dir
+      // Skip files that don't match our patterns
       const relativePath = path.relative(absoluteDirPath, filePath);
-      const resourceId = `${collection.id}/${relativePath.replace(/\.md$/, '')}`;
+
+      // Check against content.includes patterns
+      const shouldInclude = (collection.content?.includes || ['**/*.md']).some(pattern =>
+        minimatch(relativePath, pattern));
+
+      // Check against content.excludes patterns
+      const shouldExclude = (collection.content?.excludes || []).some(pattern =>
+        minimatch(relativePath, pattern));
+
+      if (!shouldInclude || shouldExclude) {
+        continue;
+      }
 
       try {
+        // Read and process the file
         const fileContent = await fs.promises.readFile(filePath, 'utf8');
 
-        resourceContents.push({
-          id: resourceId,
+        // Process the content using the appropriate processor
+        const processedContent = processorRegistry.processContent(filePath, fileContent);
+
+        // Apply any collection-specific preprocessing
+        const finalContent = collection.preprocessContent
+          ? collection.preprocessContent(processedContent)
+          : processedContent;
+
+        resources.push({
+          id: relativePath.replace(/\.md$/, ''),
           collectionId: collection.id,
-          content: fileContent,
+          content: finalContent,
+          rawContent: fileContent, // Store the original content for display
           url: collection.getURLForFile ? collection.getURLForFile(relativePath) : undefined
         });
       } catch (err) {
-        console.error(`Error reading file ${filePath}:`, err);
+        console.error(`Error processing file ${filePath}:`, err);
       }
     }
+
+    console.log(`Loaded ${resources.length} resources from ${collection.id}`);
+    return resources;
   } catch (err) {
-    console.error(`Error loading resources from ${resourcesPath}:`, err);
+    console.error(`Error loading resources from ${collection.dirPath}:`, err);
   }
 
-  return resourceContents;
+  return resources;
 }
 
 /**
