@@ -106,16 +106,17 @@ export async function loadCollectionConfig(collectionId: string): Promise<Collec
   }
 
   try {
-    // Use dynamic import to load the configuration module
+    // Use dynamic import for ESM modules
     const require = createRequire(import.meta.url);
-    const config = require(configPath).default;
+    const configModule = require(configPath);
+    const config = configModule.default;
 
     // Validate the configuration
     validateConfig(config);
 
     return config;
-  } catch (error) {
-    console.error(`Error loading collection configuration: ${error}`);
+  } catch (error: any) {
+    console.error(`Error loading collection configuration: ${error.message}`);
     throw error;
   }
 }

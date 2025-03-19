@@ -219,13 +219,16 @@ async function showStemming(id: string): Promise<void> {
       console.log(`${stem}: ${terms.join(', ')}`);
     });
 
-    console.log('\nAll Terms:');
-    console.log('---------');
-    exampleTerms.forEach(term => {
-      const stemmed = config.search.termProcessing.stemming.enabled
-        ? require('../config/stemming.js').applyStemming(term, config)
-        : '(stemming disabled)';
-      console.log(`${term.padEnd(15)} -> ${stemmed}`);
+    // Import the stemming module dynamically
+    import('../config/stemming.js').then(stemmingModule => {
+      console.log('\nAll Terms:');
+      console.log('---------');
+      exampleTerms.forEach(term => {
+        const stemmed = config.search.termProcessing.stemming.enabled
+          ? stemmingModule.applyStemming(term, config)
+          : '(stemming disabled)';
+        console.log(`${term.padEnd(15)} -> ${stemmed}`);
+      });
     });
   } catch (error: any) {
     console.error(`Error loading configuration: ${error.message}`);
