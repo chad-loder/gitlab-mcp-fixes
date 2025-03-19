@@ -5,10 +5,10 @@ import { ResourceCollection, createStopwordsSet, API_DOC_STOPWORDS } from './ind
 import { registerGitLabDocCollection, runDiagnostics, runAsyncLoadBenchmark, gitlabDocsSearch } from './gitlab-docs-common.js';
 
 /**
- * GitLab API Documentation Module
+ * GitLab CLI Documentation Module
  *
- * This module registers the GitLab API documentation as a searchable resource collection.
- * It provides documentation for all GitLab REST API endpoints, making them accessible
+ * This module registers the GitLab CLI (glab) documentation as a searchable resource collection.
+ * It provides documentation for all GitLab CLI commands, making them accessible
  * through the resource system.
  */
 
@@ -17,55 +17,55 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
- * GitLab API documentation collection configuration
+ * GitLab CLI documentation collection configuration
  */
-const GITLAB_API_DOCS_CONFIG = {
-  id: 'gitlab-api-docs',
-  name: 'GitLab API Documentation',
-  description: 'Official documentation for GitLab REST API endpoints',
-  dirPath: 'resources/gitlab-api-docs',
-  urlBase: 'https://docs.gitlab.com/ee/api/',
+const GITLAB_CLI_DOCS_CONFIG = {
+  id: 'gitlab-cli-docs',
+  name: 'GitLab CLI Documentation',
+  description: 'Official documentation for GitLab CLI commands and options',
+  dirPath: 'resources/gitlab-cli-docs',
+  urlBase: 'https://gitlab.com/gitlab-org/cli/blob/main/docs/',
 
-  // GitLab API-specific stopwords
+  // GitLab CLI-specific stopwords
   stopwords: createStopwordsSet(API_DOC_STOPWORDS, [
-    // Add GitLab-specific terms that should be filtered out
-    'gitlab', 'repository', 'repositories', 'project', 'projects', 'branch', 'branches'
+    // Add GitLab CLI-specific terms that should be filtered out
+    'gitlab', 'cli', 'glab', 'command', 'option', 'flag'
   ]),
 
-  // Custom URL generator for GitLab API docs
+  // Custom URL generator for GitLab CLI docs
   getURLForFile: (filePath: string) => {
     // Extract the filename without extension
     const fileName = path.basename(filePath, path.extname(filePath));
 
     // Map to the official documentation URL
-    return `https://docs.gitlab.com/ee/api/${fileName}.html`;
+    return `https://gitlab.com/gitlab-org/cli/blob/main/docs/${fileName}.md`;
   }
 };
 
 // Reference to the collection once registered
-let GITLAB_API_DOCS: ResourceCollection | null = null;
+let GITLAB_CLI_DOCS: ResourceCollection | null = null;
 
 /**
- * Register the GitLab API documentation collection with the resource system
+ * Register the GitLab CLI documentation collection with the resource system
  * This makes the documentation available for searching and browsing through the MCP server
  * @returns The registered ResourceCollection
  */
-export function registerGitLabApiDocs(): ResourceCollection {
-  if (!GITLAB_API_DOCS) {
-    GITLAB_API_DOCS = registerGitLabDocCollection(GITLAB_API_DOCS_CONFIG);
+export function registerGitLabCliDocs(): ResourceCollection {
+  if (!GITLAB_CLI_DOCS) {
+    GITLAB_CLI_DOCS = registerGitLabDocCollection(GITLAB_CLI_DOCS_CONFIG);
   }
-  return GITLAB_API_DOCS;
+  return GITLAB_CLI_DOCS;
 }
 
 /**
- * Run GitLab API search with performance diagnostics
+ * Run GitLab CLI search with performance diagnostics
  * @param query Search query string
  * @param options Configuration options for the search
  * @returns Search results array
  */
-export async function gitlabApiSearch(query: string, options = {}): Promise<any[]> {
+export async function gitlabCliSearch(query: string, options = {}): Promise<any[]> {
   // Ensure collection is registered before searching
-  const collection = GITLAB_API_DOCS || registerGitLabApiDocs();
+  const collection = GITLAB_CLI_DOCS || registerGitLabCliDocs();
   return gitlabDocsSearch(collection, query, options);
 }
 
@@ -74,7 +74,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
 
   // Register the collection to ensure it's available
-  const collection = registerGitLabApiDocs();
+  const collection = registerGitLabCliDocs();
 
   if (args.includes('--diagnose') || args.includes('-d')) {
     runDiagnostics(collection).catch(err => {
@@ -87,9 +87,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(1);
     });
   } else {
-    console.log('Usage: node gitlab-api-docs.js [option]');
+    console.log('Usage: node gitlab-cli-docs.js [option]');
     console.log('Options:');
-    console.log('  --diagnose, -d    Run diagnostic tests on the GitLab API documentation');
+    console.log('  --diagnose, -d    Run diagnostic tests on the GitLab CLI documentation');
     console.log('  --benchmark, -b   Run performance benchmark for async resource loading and indexing');
   }
 }

@@ -18,7 +18,7 @@
   "scripts": {
     "clean": "rm -rf build",
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
-    "postbuild": "mkdir -p build/resources/config && mkdir -p build/resources/tools && mkdir -p build/resources/gitlab-api-docs/content && cp -R resources/gitlab-api-docs/content/* build/resources/gitlab-api-docs/content/ && mkdir -p build/gitlab-api-docs && cp -R resources/gitlab-api-docs/content build/gitlab-api-docs/",
+    "postbuild": "mkdir -p build/resources/config && mkdir -p build/resources/tools && mkdir -p build/resources/gitlab-api-docs/content && cp -R resources/gitlab-api-docs/content/* build/resources/gitlab-api-docs/content/ && mkdir -p build/gitlab-api-docs && cp -R resources/gitlab-api-docs/content build/gitlab-api-docs/ && mkdir -p build/resources/gitlab-cli-docs/content && cp -R resources/gitlab-cli-docs/content/* build/resources/gitlab-cli-docs/content/ && mkdir -p build/gitlab-cli-docs && cp -R resources/gitlab-cli-docs/content build/gitlab-cli-docs/",
     "prepare": "npm run build",
     "watch": "tsc --watch",
     "deploy": "npm run build && npm publish",
