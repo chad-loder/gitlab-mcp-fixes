@@ -7,6 +7,8 @@ import { promisify } from 'util';
 import * as porterStemmer from 'porterstem';
 import { processorRegistry, BaseIndexingProcessor } from './processors/index.js';
 import { minimatch } from 'minimatch';
+import { tokenizeText, processTerm, TokenizerFactory } from './utils/tokenizer.js';
+import defaultConfig from './config/default.js';
 
 // Create dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -357,22 +359,20 @@ async function loadResourcesFromCollection(
   try {
     console.log(`Loading resources from collection: ${collection.id} (${collection.name})`);
 
-    // Load the collection-specific configuration if available
+    // Look for a collection-specific configuration
     let collectionConfig;
-
     try {
-      // First try to load the collection-specific config
+      // Import the collection's configuration module if available
       const configModule = await import(`./config/${collection.id}.js`);
       collectionConfig = configModule.default;
-      console.log(`Loaded configuration for collection: ${collection.id}`);
+      console.log(`Using specific configuration for collection: ${collection.id}`);
     } catch (e) {
       // If no collection-specific config exists, use the default
-      const defaultConfig = await import('./config/default.js');
-      collectionConfig = defaultConfig.default;
+      collectionConfig = defaultConfig;
       console.log(`Using default configuration for collection: ${collection.id}`);
     }
 
-    // Configure the processor registry with the collection config
+    // Tell processor registry about this configuration
     processorRegistry.setCollectionConfig(collectionConfig);
 
     // Register collection-specific processors if provided
@@ -529,6 +529,17 @@ export async function getSearchIndexForCollection(
     // Import it here to avoid circular dependencies
     const { processorRegistry } = await import('./processors/index.js');
 
+    // Get the collection config for tokenization
+    let collectionConfig;
+    try {
+      // Import the collection's configuration module if available
+      const configModule = await import(`./config/${collection.id}.js`);
+      collectionConfig = configModule.default;
+    } catch (e) {
+      // If no collection-specific config exists, use the default
+      collectionConfig = defaultConfig;
+    }
+
     // Pre-process resources to extract fields in small batches
     // This is CPU intensive, so we do it in chunks
     const enhancedResources: ResourceContent[] = [];
@@ -580,36 +591,16 @@ export async function getSearchIndexForCollection(
       fields: ['title', 'parameterData', 'content'],
       storeFields: ['id', 'collectionId', 'title', 'hasParameters', 'endpointPattern', 'url'],
 
-      // Custom tokenizer that preserves identifiers with underscores
+      // Create a tokenizer with config settings
       tokenize: (text) => {
-        // Split on spaces and other delimiters while preserving words with underscores
-        const regex = /[a-zA-Z0-9_]+|[^\s\w]+/g;
-        const matches = text.match(regex) || [];
-        return matches.filter(Boolean);
+        const tokenizer = TokenizerFactory.createFromConfig(collectionConfig || defaultConfig);
+        return tokenizer.tokenize(text);
       },
 
-      // Process terms for case normalization and stopword filtering
+      // Use our process term function with collection config
       processTerm: (term, _fieldName) => {
-        // Convert to lowercase
-        term = term.toLowerCase();
-
-        // Skip common stopwords - use the collection-specific set if available
-        const collectionStopwords = collection.stopwords || API_DOC_STOPWORDS;
-        if (collectionStopwords.has(term)) {
-          return null;
-        }
-
-        // Skip very short terms (except IDs like "id")
-        if (term.length < 3 && term !== 'id') {
-          return null;
-        }
-
-        // Apply Porter stemming algorithm for better term matching
-        if (term.length > 3) {
-          term = porterStemmer.stem(term);
-        }
-
-        return term;
+        const tokenizer = TokenizerFactory.createFromConfig(collectionConfig || defaultConfig);
+        return tokenizer.processTerm(term);
       },
 
       // Default search options
@@ -742,7 +733,22 @@ export async function searchCollection(params: {
   const searchResults = searchIndex.search(query, searchOptions);
 
   // Map results to resources with context
-  const resourceResults = searchResults.slice(0, limit).map(result => {
+  const resourceResults = await mapSearchResultsToResources(searchResults, resources, query, limit);
+
+  return { resources: resourceResults };
+}
+
+/**
+ * Map search results to full resources with snippets
+ */
+async function mapSearchResultsToResources(
+  searchResults: any[],
+  resources: ResourceContent[],
+  query: string,
+  limit: number
+): Promise<any[]> {
+  // Create promises for each result
+  const resultPromises = searchResults.slice(0, limit).map(async (result) => {
     const resource = resources.find(r => r.id === result.id);
 
     if (!resource) {
@@ -751,10 +757,11 @@ export async function searchCollection(params: {
 
     // Get content around matches for context
     const queryTerms = query.split(/\s+/).filter(term => term.length > 2);
-    const snippet = getSnippetFromContent(resource.content, queryTerms);
+    const snippet = await getSnippetFromContent(resource.content, queryTerms);
 
     return {
       id: resource.id,
+      resource_id: resource.id,  // Alias for clarity
       collection_id: resource.collectionId,
       score: result.score,
       title: resource.title,
@@ -763,12 +770,16 @@ export async function searchCollection(params: {
       endpointPattern: resource.endpointPattern,
       hasParameters: resource.hasParameters
     };
-  }).filter(Boolean);
+  });
 
-  return { resources: resourceResults };
+  // Wait for all results to be processed
+  const results = await Promise.all(resultPromises);
+
+  // Filter out any null values
+  return results.filter(Boolean);
 }
 
-export function getSnippetFromContent(content: string, queryTerms: string[]): string {
+export async function getSnippetFromContent(content: string, queryTerms: string[]): Promise<string> {
   if (!content || !queryTerms || queryTerms.length === 0) {
     return content.substring(0, 200) + (content.length > 200 ? '...' : '');
   }
@@ -776,77 +787,83 @@ export function getSnippetFromContent(content: string, queryTerms: string[]): st
   // Join query terms for processor-based extraction
   const query = queryTerms.join(' ');
 
-  // Use the processor registry to handle the extraction
+  // Use the MarkdownProcessor for snippet extraction
   try {
-    // This is a synchronous method, so we can't import dynamically here
-    // Instead, we use the exported processorRegistry which should be available
-    const { processorRegistry } = require('./processors/index.js');
+    // Import synchronously to avoid issues with dynamic imports
+    const { MarkdownProcessor } = await import('./processors/markdown.js');
+    const processor = new MarkdownProcessor();
 
-    // Use the default processor for snippet extraction
-    // This will use the most appropriate processor's implementation
-    const processor = processorRegistry.getProcessorForFile('snippet.md');
+    // Call the extractContentSnippet method directly
     return processor.extractContentSnippet(content, query);
   } catch (err) {
     console.error('Error using processor for snippet extraction:', err);
 
-    // Fallback to the original implementation if processor is unavailable
-    const normalizedContent = content.toLowerCase();
-    const normalizedTerms = queryTerms.map(term => term.toLowerCase());
-
-    const matchPositions: number[] = [];
-    normalizedTerms.forEach(term => {
-      let pos = normalizedContent.indexOf(term);
-      while (pos !== -1) {
-        matchPositions.push(pos);
-        pos = normalizedContent.indexOf(term, pos + 1);
-      }
-    });
-
-    if (matchPositions.length === 0) {
-      // No exact matches, return the start of the content
-      return content.substring(0, 200) + (content.length > 200 ? '...' : '');
-    }
-
-    // Sort positions and choose the most representative match
-    matchPositions.sort((a, b) => a - b);
-
-    // Better snippet extraction: Get a window around the first match
-    // but try to include additional matches if they're close
-    let primaryMatchPos = matchPositions[0];
-
-    // If we have multiple matches, try to find a good cluster of matches
-    if (matchPositions.length > 2) {
-      // Calculate distances between consecutive matches
-      const diffs = [];
-      for (let i = 1; i < matchPositions.length; i++) {
-        diffs.push({
-          pos: matchPositions[i-1],
-          diff: matchPositions[i] - matchPositions[i-1]
-        });
-      }
-
-      // Find the position with most matches in proximity (within 100 chars)
-      const matchClusters = diffs.filter(d => d.diff < 100);
-      if (matchClusters.length > 0) {
-        // Use the start of the densest cluster as our primary position
-        primaryMatchPos = matchClusters[0].pos;
-      }
-    }
-
-    // Define snippet window - make it larger to capture more context
-    const snippetLength = 300;
-    const windowStart = Math.max(0, primaryMatchPos - snippetLength / 3);
-    const windowEnd = Math.min(content.length, primaryMatchPos + snippetLength * 2/3);
-
-    // Extract snippet
-    let snippet = content.substring(windowStart, windowEnd);
-
-    // Add ellipsis if needed
-    if (windowStart > 0) snippet = '...' + snippet;
-    if (windowEnd < content.length) snippet = snippet + '...';
-
-    return snippet;
+    // Fallback to basic snippet extraction
+    return extractBasicSnippet(content, queryTerms);
   }
+}
+
+/**
+ * Extract a basic snippet from content based on query terms
+ * This is a fallback method used when the processor approach fails
+ */
+function extractBasicSnippet(content: string, queryTerms: string[]): string {
+  const normalizedContent = content.toLowerCase();
+  const normalizedTerms = queryTerms.map(term => term.toLowerCase());
+
+  const matchPositions: number[] = [];
+  normalizedTerms.forEach(term => {
+    let pos = normalizedContent.indexOf(term);
+    while (pos !== -1) {
+      matchPositions.push(pos);
+      pos = normalizedContent.indexOf(term, pos + 1);
+    }
+  });
+
+  if (matchPositions.length === 0) {
+    // No exact matches, return the start of the content
+    return content.substring(0, 200) + (content.length > 200 ? '...' : '');
+  }
+
+  // Sort positions and choose the most representative match
+  matchPositions.sort((a, b) => a - b);
+
+  // Better snippet extraction: Get a window around the first match
+  // but try to include additional matches if they're close
+  let primaryMatchPos = matchPositions[0];
+
+  // If we have multiple matches, try to find a good cluster of matches
+  if (matchPositions.length > 2) {
+    // Calculate distances between consecutive matches
+    const diffs = [];
+    for (let i = 1; i < matchPositions.length; i++) {
+      diffs.push({
+        pos: matchPositions[i-1],
+        diff: matchPositions[i] - matchPositions[i-1]
+      });
+    }
+
+    // Find the position with most matches in proximity (within 100 chars)
+    const matchClusters = diffs.filter(d => d.diff < 100);
+    if (matchClusters.length > 0) {
+      // Use the start of the densest cluster as our primary position
+      primaryMatchPos = matchClusters[0].pos;
+    }
+  }
+
+  // Define snippet window - make it larger to capture more context
+  const snippetLength = 300;
+  const windowStart = Math.max(0, primaryMatchPos - snippetLength / 3);
+  const windowEnd = Math.min(content.length, primaryMatchPos + snippetLength * 2/3);
+
+  // Extract snippet
+  let snippet = content.substring(windowStart, windowEnd);
+
+  // Add ellipsis if needed
+  if (windowStart > 0) snippet = '...' + snippet;
+  if (windowEnd < content.length) snippet = snippet + '...';
+
+  return snippet;
 }
 
 /**
