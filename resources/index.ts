@@ -362,12 +362,12 @@ async function loadResourcesFromCollection(
 
     try {
       // First try to load the collection-specific config
-      const configModule = await import(`./config/${collection.id}.mjs`);
+      const configModule = await import(`./config/${collection.id}.js`);
       collectionConfig = configModule.default;
       console.log(`Loaded configuration for collection: ${collection.id}`);
     } catch (e) {
       // If no collection-specific config exists, use the default
-      const defaultConfig = await import('./config/default.mjs');
+      const defaultConfig = await import('./config/default.js');
       collectionConfig = defaultConfig.default;
       console.log(`Using default configuration for collection: ${collection.id}`);
     }
@@ -846,5 +846,71 @@ export function getSnippetFromContent(content: string, queryTerms: string[]): st
     if (windowEnd < content.length) snippet = snippet + '...';
 
     return snippet;
+  }
+}
+
+/**
+ * Loads resources from a collection configuration.
+ * Each collection defines its content root, inclusion/exclusion patterns,
+ * and other settings.
+ */
+export async function loadCollections(): Promise<ResourceCollection[]> {
+  try {
+    console.log('Loading collection configuration');
+
+    // Import default configuration to use as a base
+    const defaultConfig = await import('./config/default.js').then(m => m.default);
+
+    // Get available collection configurations
+    const collectionsDir = path.join(__dirname, 'config');
+    const files = await fs.promises.readdir(collectionsDir);
+
+    // Get list of config files and import them
+    const configFiles = files.filter(file =>
+      (file.endsWith('.js')) &&
+      file !== 'default.js'
+    );
+
+    // Load each configuration
+    const collectionConfigs = await Promise.all(
+      configFiles.map(async (file) => {
+        try {
+          // Get the full path to the config file
+          const configFile = path.join(collectionsDir, file);
+          const module = await import(`file://${configFile}`);
+          const config = module.default;
+
+          // Validate the configuration
+          if (!config || !config.metadata || !config.metadata.id) {
+            console.warn(`Skipping invalid collection config: ${file}`);
+            return null;
+          }
+
+          // Create a proper ResourceCollection object
+          const collectionDirPath = path.join(__dirname, '../', config.metadata.id);
+          const contentDirPath = config.getContentPath(collectionDirPath);
+
+          return {
+            id: config.metadata.id,
+            name: config.metadata.name,
+            description: config.metadata.description,
+            dirPath: collectionDirPath,
+            contentDirPath: contentDirPath,
+            config,
+            resources: [],
+            stopwords: config.getAllStopwords()
+          } as unknown as ResourceCollection;
+        } catch (err) {
+          console.error(`Error loading collection config: ${file}`, err);
+          return null;
+        }
+      })
+    );
+
+    // Filter out any null values from failed imports
+    return collectionConfigs.filter(Boolean) as ResourceCollection[];
+  } catch (err) {
+    console.error('Failed to load collections:', err);
+    return [];
   }
 }
