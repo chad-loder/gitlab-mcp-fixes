@@ -1,6 +1,24 @@
 // Benchmarking script for measuring indexing performance
 import { ResourceCollection, getSearchIndexForCollection } from './index.js';
 import { SearchResult } from 'minisearch';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+// Get the current directory in ESM context
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const isInBuildDir = __dirname.includes('/build/') || __dirname.includes('\\build\\');
+
+// If we're running from the build directory, adjust paths accordingly
+if (isInBuildDir) {
+  // Set NODE_PATH to include the parent directory to help with imports
+  process.env.NODE_PATH = path.join(__dirname, '../..');
+  console.log('Running from build directory, adjusting paths...');
+
+  // Move up one level to the build directory root
+  process.chdir(path.join(__dirname, '..'));
+}
 
 // Configuration for benchmarking
 const RUNS_PER_CHUNK_SIZE = 3; // Number of runs to average for each chunk size
@@ -147,9 +165,9 @@ export async function runBenchmark(): Promise<void> {
           console.log('   - Async indexing in progress, waiting for completion...');
 
           // Poll until indexing is complete
-          while (!searchIndex.isIndexingComplete()) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
+          // Note: MiniSearch doesn't have an isIndexingComplete method directly
+          // We rely on the result from getSearchIndexForCollection
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
 
         const indexEnd = performance.now();

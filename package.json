@@ -18,11 +18,11 @@
   "scripts": {
     "clean": "rm -rf build",
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
-    "postbuild": "mkdir -p build/resources/config && mkdir -p build/resources/tools && mkdir -p build/resources/gitlab-api-docs/content && cp -R resources/gitlab-api-docs/content/* build/resources/gitlab-api-docs/content/",
+    "postbuild": "mkdir -p build/resources/config && mkdir -p build/resources/tools && mkdir -p build/resources/gitlab-api-docs/content && cp -R resources/gitlab-api-docs/content/* build/resources/gitlab-api-docs/content/ && mkdir -p build/gitlab-api-docs && cp -R resources/gitlab-api-docs/content build/gitlab-api-docs/",
     "prepare": "npm run build",
     "watch": "tsc --watch",
     "deploy": "npm run build && npm publish",
-    "diagnostic": "node build/resources/benchmark-indexing.js"
+    "resources:diagnostics": "cd build && node resources/benchmark-indexing.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.0.1",
